@@ -39,6 +39,20 @@ pub const LinkedList = struct {
         self.tail = node;
     }
 
+    pub fn insertFirst(self: *Self, value: []const u8) !void {
+        const node = try self.allocator.create(Node);
+        node.* = .{ .value = value };
+        self.len += 1;
+
+        if (self.head) |head| {
+            head.prev = node;
+            node.next = head;
+        } else {
+            self.tail = node;
+        }
+        self.head = node;
+    }
+
     pub fn indexOf(self: *Self, value: []const u8) !usize {
         var curr = self.head;
         var i: usize = 0;
@@ -65,6 +79,20 @@ pub const LinkedList = struct {
                 self.tail = null;
             }
             self.allocator.destroy(tail);
+            self.len -= 1;
+        }
+    }
+
+    pub fn removeFirst(self: *Self) void {
+        if (self.head) |head| {
+            if (head.next) |next| {
+                next.prev = null;
+                self.head = next;
+            } else {
+                self.head = null;
+                self.tail = null;
+            }
+            self.allocator.destroy(head);
             self.len -= 1;
         }
     }
@@ -164,5 +192,33 @@ test "deinit" {
     try expect(3 == list.len);
 
     list.deinit();
+    try expect(0 == list.len);
+}
+
+test "insertFirst/removeFirst/indexOf" {
+    const expect = std.testing.expect;
+    const eql = std.mem.eql;
+    var test_allocator = std.testing.allocator;
+
+    var list = LinkedList.init(test_allocator);
+    defer list.deinit();
+
+    try list.insertFirst("hi");
+    try expect(1 == list.len);
+    try expect(eql(u8, list.tail.?.value, "hi"));
+    try list.insertFirst("world");
+    try expect(2 == list.len);
+    try expect(eql(u8, list.head.?.value, "world"));
+    try expect(1 == try list.indexOf("hi"));
+    try expect(0 == try list.indexOf("world"));
+    list.removeFirst();
+    try expect(eql(u8, list.head.?.value, "hi"));
+    try expect(1 == list.len);
+    list.removeFirst();
+    if (list.indexOf("hi")) |index| {
+        try expect(false);
+    } else |err| switch (err) {
+        LinkedList.ListError.NotFound => try expect(true),
+    }
     try expect(0 == list.len);
 }
