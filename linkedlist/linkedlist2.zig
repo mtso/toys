@@ -151,3 +151,18 @@ test "iterator" {
         try expect(eql(u8, try it.next(), strs[i]));
     }
 }
+
+test "deinit" {
+    const expect = std.testing.expect;
+    const eql = std.mem.eql;
+    var test_allocator = std.testing.allocator;
+
+    var list = LinkedList.init(test_allocator);
+    try list.insert("hi");
+    try list.insert("world");
+    try list.insert("!");
+    try expect(3 == list.len);
+
+    list.deinit();
+    try expect(0 == list.len);
+}
