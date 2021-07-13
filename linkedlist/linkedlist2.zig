@@ -74,9 +74,40 @@ pub const LinkedList = struct {
             self.remove();
         }
     }
+
+    pub fn iter(self: *Self) StringIterator {
+        return StringIterator.init(self);
+    }
 };
 
-test "insert" {
+pub const StringIterator = struct {
+    const Self = @This();
+
+    list: *LinkedList,
+    curr: ?*LinkedList.Node,
+
+    const IterError = error{End};
+
+    pub fn init(list: *LinkedList) Self {
+        return Self{ .list = list, .curr = list.head };
+    }
+
+    pub fn next(self: *Self) ![]const u8 {
+        if (self.curr) |node| {
+            const value = node.value;
+            self.curr = node.next;
+            return value;
+        } else {
+            return IterError.End;
+        }
+    }
+
+    pub fn hasNext(self: *Self) bool {
+        return self.curr != null;
+    }
+};
+
+test "insert/remove/indexOf" {
     const expect = std.testing.expect;
     const eql = std.mem.eql;
     var test_allocator = std.testing.allocator;
@@ -101,4 +132,22 @@ test "insert" {
         LinkedList.ListError.NotFound => try expect(true),
     }
     try expect(0 == list.len);
+}
+
+test "iterator" {
+    const expect = std.testing.expect;
+    const eql = std.mem.eql;
+    var test_allocator = std.testing.allocator;
+
+    var list = LinkedList.init(test_allocator);
+    defer list.deinit();
+    try list.insert("hi");
+    try list.insert("world");
+
+    var it = list.iter();
+    const strs = [_][]const u8 {"hi", "world"};
+    var i: usize = 0;
+    while (it.hasNext()) : (i += 1) {
+        try expect(eql(u8, try it.next(), strs[i]));
+    }
 }
