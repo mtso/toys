@@ -2,8 +2,55 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 const ComptimeStringMap = std.ComptimeStringMap;
+const expr = @import("expr.zig");
 
 const stdout = std.io.getStdOut().writer();
+
+// pub const Visitor = struct {
+//     pub const Error = error{ParseError};
+//     pub const Self = @This();
+
+//     visitLiteralExprFn: fn (self: *Visitor, expr2: expr.Literal) Error![]const u8,
+
+//     pub fn visitLiteralExpr(self: *Self, expr2: expr.Literal) Error![]const u8 {
+//         return try self.visitLiteralExprFn(self, expr2);
+//     }
+// };
+
+// pub fn StringVisitor() type {
+//     return struct {
+//         const Self = @This();
+//         visitor: Visitor = Visitor{
+//             .visitLiteralExprFn = visitLiteralExpr,
+//         },
+//         // .visitBinaryExpr: ,
+//         pub fn init() StringVisitor {
+//             return StringVisitor{};
+//         }
+//         pub fn parse(self: *StringVisitor) []const u8 {
+//             return self.visitor.visitLiteralExpr(.EOF);
+//         }
+//         pub fn visitLiteralExpr(visitor: *Visitor, expr2: expr.Literal) Visitor.Error![]const u8 {
+//             const self = @fieldParentPtr(Self, "visitor", visitor);
+//             return "hi";
+//         }
+//     };
+// }
+// const StringVisitor = struct {
+//     visitor: Visitor = Visitor{
+//         .visitLiteralExpr = visitLiteralExpr,
+//     },
+//     // .visitBinaryExpr: ,
+//     pub fn init() StringVisitor {
+//         return StringVisitor{};
+//     }
+//     pub fn parse(self: *StringVisitor) []const u8 {
+//         return self.visitor.visitLiteralExpr(.EOF);
+//     }
+//     pub fn visitLiteralExpr(self: *Visitor, expr: expr.Literal) []const u8 {
+//         return "hi";
+//     }
+// };
 
 const TokenType = enum {
 // Single-character tokens.
@@ -16,17 +63,17 @@ const TokenType = enum {
     AND, CLASS, ELSE, FALSE, FUN, FOR, IF, NIL, OR, PRINT, RETURN, SUPER, THIS, TRUE, VAR, WHILE, EOF
 };
 
-const Literal = union(TokenType) {
+pub const Value = union(TokenType) {
     IDENTIFIER: []u8, STRING: []u8, NUMBER: f64, LEFT_PAREN: void, RIGHT_PAREN: void, LEFT_BRACE: void, RIGHT_BRACE: void, COMMA: void, DOT: void, MINUS: void, PLUS: void, SEMICOLON: void, SLASH: void, STAR: void, BANG: void, BANG_EQUAL: void, EQUAL: void, EQUAL_EQUAL: void, GREATER: void, GREATER_EQUAL: void, LESS: void, LESS_EQUAL: void, AND: void, CLASS: void, ELSE: void, FALSE: void, FUN: void, FOR: void, IF: void, NIL: void, OR: void, PRINT: void, RETURN: void, SUPER: void, THIS: void, TRUE: void, VAR: void, WHILE: void, EOF: void
 };
 
-const Token = struct {
+pub const Token = struct {
     token_type: TokenType,
     lexeme: []u8,
-    literal: ?Literal,
+    literal: ?Value,
     line: u32,
 
-    pub fn init(token_type: TokenType, lexeme: []u8, literal: ?Literal, line: u32) Token {
+    pub fn init(token_type: TokenType, lexeme: []u8, literal: ?Value, line: u32) Token {
         return .{
             .token_type = token_type,
             .lexeme = lexeme,
@@ -207,7 +254,7 @@ const Scanner = struct {
         try self.tokens.append(Token.init(typ, text, null, self.line));
     }
 
-    fn addTokenLiteral(self: *Scanner, typ: TokenType, literal: Literal) !void {
+    fn addTokenLiteral(self: *Scanner, typ: TokenType, literal: Value) !void {
         var text = self.source[self.start..self.current];
         try self.tokens.append(Token.init(typ, text, literal, self.line));
     }
@@ -269,6 +316,12 @@ pub fn main() !u8 {
     const gpa = &general_purpose_allocator.allocator;
     const args = try std.process.argsAlloc(gpa);
     defer std.process.argsFree(gpa, args);
+
+    // var sv = StringVisitor(){};
+    // var visitor = &sv.visitor;
+    // visitor.parse
+    // var lit = expr.Literal.init(.EOF);
+    // std.debug.print("StringVisitor {s}", .{visit.visitLiteralExpr(lit)});
 
     if (args.len > 2) {
         try stdout.print("Usage: zlox [script]\n", .{});
