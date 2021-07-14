@@ -1,0 +1,10 @@
+print("Hello world");
+// this is a comment
+(( )){} // grouping stuff
+!*+-/=<> <= == // operators
+0.0
+and
+super
+
+const what = "how";
+var language = "lox";
