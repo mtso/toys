@@ -3,7 +3,384 @@ const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 const ComptimeStringMap = std.ComptimeStringMap;
 
+const Expr = @import("expr.zig").Expr;
+const Visitor = @import("expr.zig").Visitor;
+const LiteralExpr = @import("expr.zig").LiteralExpr;
+const GroupingExpr = @import("expr.zig").GroupingExpr;
+const BinaryExpr = @import("expr.zig").BinaryExpr;
+const UnaryExpr = @import("expr.zig").UnaryExpr;
+
 const stdout = std.io.getStdOut().writer();
+
+test "Parser recursive-descent" {
+    var test_allocator = std.testing.allocator;
+    var tokens = ArrayList(Token).init(test_allocator);
+    try tokens.append(Token.init(.LEFT_PAREN, "(", .LEFT_PAREN, 1));
+    try tokens.append(Token.init(.NUMBER, "2.0", Literal{ .NUMBER = 2.0 }, 1));
+    try tokens.append(Token.init(.GREATER, ">", .GREATER, 1));
+    try tokens.append(Token.init(.NUMBER, "3.0", Literal{ .NUMBER = 3.0 }, 1));
+    try tokens.append(Token.init(.EQUAL_EQUAL, "==", .EQUAL_EQUAL, 1));
+    try tokens.append(Token.init(.NUMBER, "4.0", Literal{ .NUMBER = 4.0 }, 1));
+    try tokens.append(Token.init(.RIGHT_PAREN, ")", .RIGHT_PAREN, 1));
+    // try tokens.append(Token.init(.FALSE, "false", Literal{.FALSE=false}, 1));
+    defer tokens.deinit();
+    var parser = Parser.init(test_allocator, tokens);
+    defer parser.deinit();
+
+    // Should succeed.
+    _ = try parser.parse();
+    // var printer = AstPrinter{};
+    // _ = printer.print(exp);
+    // std.debug.print("\nwhat: {any}\n", .{exp});
+}
+
+// missing_literal is for Literal Tokens
+pub const ParseError = error{ bad_expr, bad_state, alloc_err, missing_literal };
+
+pub const Parser = struct {
+    const Self = @This();
+    const Err = ParseError;
+
+    allocator: *Allocator,
+    tokens: ArrayList(Token),
+    current: usize = 0,
+    exprs: ArrayList(*Expr),
+
+    error_token: ?Token = null,
+    error_message: ?[]const u8 = null,
+
+    pub fn init(allocator: *Allocator, tokens: ArrayList(Token)) Parser {
+        return .{ .allocator = allocator, .tokens = tokens, .exprs = ArrayList(*Expr).init(allocator) };
+    }
+
+    pub fn deinit(self: *Parser) void {
+        for (self.exprs.items) |exp| {
+            DeinitVisitor.init(self.allocator).deinit(exp);
+        }
+        self.exprs.deinit();
+    }
+
+    pub fn parse(self: *Parser) !?*Expr {
+        if (self.expression()) |exp| {
+            self.exprs.append(exp) catch {
+                return Self.Err.alloc_err;
+            };
+            self.error_token = null;
+            self.error_message = null;
+            return exp;
+        } else |err| {
+            self.error_token = null;
+            self.error_message = null;
+            _ = switch (err) {
+                Self.Err.bad_expr => return null,
+                else => return err,
+            };
+        }
+    }
+
+    fn expression(self: *Parser) !*Expr {
+        return try self.equality();
+    }
+
+    fn equality(self: *Parser) !*Expr {
+        var exp: *Expr = try self.comparison();
+        while (self.matchAny(([_]TokenType{ .BANG_EQUAL, .EQUAL_EQUAL })[0..])) {
+            var operator = try self.previous();
+            var right = try self.comparison();
+            var expP = BinaryExpr.init(self.allocator, exp, operator, right) catch {
+                return Self.Err.alloc_err;
+            };
+            exp = &expP.expr;
+        }
+        return exp;
+    }
+
+    fn comparison(self: *Parser) !*Expr {
+        var exp: *Expr = try self.term();
+        while (self.matchAny(([_]TokenType{ .GREATER, .GREATER_EQUAL, .LESS, .LESS_EQUAL })[0..])) {
+            var operator = try self.previous();
+            var right = try self.term();
+            var expP = BinaryExpr.init(self.allocator, exp, operator, right) catch {
+                return Self.Err.alloc_err;
+            };
+            exp = &expP.expr;
+        }
+        return exp;
+    }
+
+    fn term(self: *Parser) !*Expr {
+        var exp: *Expr = try self.factor();
+        while (self.matchAny(([_]TokenType{ .MINUS, .PLUS })[0..])) {
+            var operator = try self.previous();
+            var right = try self.factor();
+            var expP = BinaryExpr.init(self.allocator, exp, operator, right) catch {
+                return Self.Err.alloc_err;
+            };
+            exp = &expP.expr;
+        }
+        return exp;
+    }
+
+    fn factor(self: *Parser) !*Expr {
+        var exp: *Expr = try self.unary();
+        while (self.matchAny(([_]TokenType{ .SLASH, .STAR })[0..])) {
+            var operator = try self.previous();
+            var right = try self.unary();
+            var expP = BinaryExpr.init(self.allocator, exp, operator, right) catch {
+                return Self.Err.alloc_err;
+            };
+            exp = &expP.expr;
+        }
+        return exp;
+    }
+
+    fn unary(self: *Parser) Err!*Expr {
+        while (self.matchAny(([_]TokenType{ .SLASH, .STAR })[0..])) {
+            const operator = try self.previous();
+            const right = try self.unary();
+            const exp = UnaryExpr.init(self.allocator, operator, right) catch {
+                return Self.Err.alloc_err;
+            };
+            return &exp.expr;
+        }
+        return try self.primary();
+    }
+
+    fn primary(self: *Parser) Err!*Expr {
+        if (self.match(.FALSE)) {
+            const exp = LiteralExpr.init(self.allocator, Literal{ .FALSE = false }) catch {
+                return Self.Err.alloc_err;
+            };
+            return &exp.expr;
+        }
+        if (self.match(.TRUE)) {
+            const exp = LiteralExpr.init(self.allocator, Literal{ .TRUE = true }) catch {
+                return Self.Err.alloc_err;
+            };
+            return &exp.expr;
+        }
+        if (self.match(.NIL)) {
+            const exp = LiteralExpr.init(self.allocator, Literal{ .NIL = null }) catch {
+                return Self.Err.alloc_err;
+            };
+            return &exp.expr;
+        }
+
+        if (self.match(.NUMBER)) {
+            const prev = try self.previous();
+            if (prev.literal) |literal| {
+                const exp = LiteralExpr.init(self.allocator, literal) catch {
+                    return Self.Err.alloc_err;
+                };
+                return &exp.expr;
+            } else {
+                return Self.Err.missing_literal;
+            }
+        }
+        if (self.match(.STRING)) {
+            const prev = try self.previous();
+            if (prev.literal) |literal| {
+                const exp = LiteralExpr.init(self.allocator, literal) catch {
+                    return Self.Err.alloc_err;
+                };
+                return &exp.expr;
+            } else {
+                return Self.Err.missing_literal;
+            }
+        }
+
+        if (self.match(.LEFT_PAREN)) {
+            const exp = try self.expression();
+            _ = try self.consume(.RIGHT_PAREN, "Expect ')' after expression.");
+            const expP = GroupingExpr.init(self.allocator, exp) catch {
+                return Self.Err.alloc_err;
+            };
+            return &expP.expr;
+        }
+
+        self.handleError(try self.peek(), "Expect expression.");
+        return Self.Err.bad_expr;
+    }
+
+    fn handleError(self: *Parser, token: Token, message: []const u8) void {
+        self.error_token = token;
+        self.error_message = message;
+        if (token.token_type == .EOF) {
+            report(token.line, " at end", message);
+        } else {
+            var full_message: [100]u8 = undefined;
+            const fmt_slice = full_message[0 .. 6 + token.lexeme.len];
+            _ = std.fmt.bufPrint(fmt_slice, " at '{s}'", .{token.lexeme}) catch {
+                return;
+            };
+            report(token.line, fmt_slice, message);
+        }
+    }
+
+    fn synchronize(self: *Parser) !void {
+        _ = try self.advance();
+        while (!self.isAtEnd()) {
+            if ((try self.previous()).token_type == .SEMICOLON) return;
+
+            _ = switch ((try self.peek()).token_type) {
+                .CLASS, .FUN, .VAR, .FOR, .IF, .WHILE, .PRINT, .RETURN => return,
+                else => try self.advance(),
+            };
+        }
+    }
+
+    fn matchAny(self: *Parser, types: []const TokenType) bool {
+        for (types) |typ| {
+            if (self.check(typ)) {
+                _ = self.advance() catch {
+                    return false;
+                };
+                return true;
+            }
+        }
+        return false;
+    }
+
+    fn match(self: *Parser, typ: TokenType) bool {
+        if (self.check(typ)) {
+            _ = self.advance() catch {
+                return false;
+            };
+            return true;
+        }
+        return false;
+    }
+
+    fn check(self: *Parser, tt: TokenType) bool {
+        if (self.isAtEnd()) return false;
+        if (self.peek()) |t| {
+            return t.token_type == tt;
+        } else |_| {
+            return false;
+        }
+    }
+
+    fn advance(self: *Parser) !Token {
+        if (!self.isAtEnd()) {
+            self.current += 1;
+        }
+        return try self.previous();
+    }
+
+    fn consume(self: *Parser, ttype: TokenType, message: []const u8) !Token {
+        if (self.check(ttype)) return try self.advance();
+        // error(peek(), message);
+        return Self.Err.bad_state;
+    }
+
+    fn previous(self: *Parser) Err!Token {
+        if (self.current <= 0 or self.tokens.items.len < 1) return Self.Err.bad_state;
+        return self.tokens.items[self.current - 1];
+    }
+
+    fn isAtEnd(self: *Parser) bool {
+        if (self.peek()) |token| {
+            return token.token_type == .EOF;
+        } else |_| {
+            return true;
+        }
+    }
+
+    fn peek(self: *Parser) Err!Token {
+        if (self.current < self.tokens.items.len) {
+            return self.tokens.items[self.current];
+        } else {
+            return Self.Err.bad_state;
+        }
+    }
+};
+
+/// Deinitializes an ast.
+pub const DeinitVisitor = struct {
+    const Self = @This();
+    visitor: Visitor = Visitor{
+        .visitBinaryExprFn = visitBinaryExpr,
+        .visitGroupingExprFn = visitGroupingExpr,
+        .visitLiteralExprFn = visitLiteralExpr,
+        .visitUnaryExprFn = visitUnaryExpr,
+    },
+    allocator: *Allocator,
+
+    pub fn init(allocator: *Allocator) Self {
+        return .{ .allocator = allocator };
+    }
+    pub fn deinit(self: *Self, expr: *Expr) void {
+        _ = expr.accept(&self.visitor);
+    }
+    pub fn visitBinaryExpr(visitor: *Visitor, expr: BinaryExpr) ?Literal {
+        const self = @fieldParentPtr(Self, "visitor", visitor);
+        _ = expr.left.accept(visitor);
+        _ = expr.right.accept(visitor);
+        _ = self.allocator.destroy(&expr);
+        return null;
+    }
+    pub fn visitGroupingExpr(visitor: *Visitor, expr: GroupingExpr) ?Literal {
+        const self = @fieldParentPtr(Self, "visitor", visitor);
+        _ = expr.expression.accept(visitor);
+        _ = self.allocator.destroy(&expr);
+        return null;
+    }
+    pub fn visitLiteralExpr(visitor: *Visitor, expr: LiteralExpr) ?Literal {
+        const self = @fieldParentPtr(Self, "visitor", visitor);
+        self.allocator.destroy(&expr);
+        return null;
+    }
+    pub fn visitUnaryExpr(visitor: *Visitor, expr: UnaryExpr) ?Literal {
+        const self = @fieldParentPtr(Self, "visitor", visitor);
+        _ = expr.right.accept(visitor);
+        _ = self.allocator.destroy(&expr);
+        return null;
+    }
+};
+
+pub const AstPrinter = struct {
+    const Self = @This();
+    visitor: Visitor = Visitor{
+        .visitBinaryExprFn = visitBinaryExpr,
+        .visitGroupingExprFn = visitGroupingExpr,
+        .visitLiteralExprFn = visitLiteralExpr,
+        .visitUnaryExprFn = visitUnaryExpr,
+    },
+
+    pub fn print(self: *Self, expr: *Expr) void {
+        _ = expr.accept(&self.visitor);
+        std.debug.print("\n", .{});
+    }
+    pub fn visitBinaryExpr(visitor: *Visitor, expr: BinaryExpr) ?Literal {
+        std.debug.print("({s} ", .{expr.operator.lexeme});
+        _ = expr.left.accept(visitor);
+        std.debug.print(" ", .{});
+        _ = expr.right.accept(visitor);
+        std.debug.print(")", .{});
+        return null;
+    }
+    pub fn visitGroupingExpr(visitor: *Visitor, expr: GroupingExpr) ?Literal {
+        std.debug.print("(group ", .{});
+        _ = expr.expression.accept(visitor);
+        std.debug.print(")", .{});
+        return null;
+    }
+    pub fn visitLiteralExpr(visitor: *Visitor, expr: LiteralExpr) ?Literal {
+        _ = switch (expr.value) {
+            .STRING => |s| std.debug.print("{s}", .{s}),
+            .NUMBER => |n| std.debug.print("{e}", .{n}),
+            .IDENTIFIER => |s| std.debug.print("`{s}`", .{s}),
+            else => std.debug.print("nil", .{}),
+        };
+        return expr.value;
+    }
+    pub fn visitUnaryExpr(visitor: *Visitor, expr: UnaryExpr) ?Literal {
+        std.debug.print("({s} ", .{expr.operator.lexeme});
+        _ = expr.right.accept(visitor);
+        std.debug.print(")", .{});
+        return null;
+    }
+};
 
 const TokenType = enum {
 // Single-character tokens.
@@ -17,16 +394,56 @@ const TokenType = enum {
 };
 
 pub const Literal = union(TokenType) {
-    IDENTIFIER: []u8, STRING: []u8, NUMBER: f64, LEFT_PAREN: void, RIGHT_PAREN: void, LEFT_BRACE: void, RIGHT_BRACE: void, COMMA: void, DOT: void, MINUS: void, PLUS: void, SEMICOLON: void, SLASH: void, STAR: void, BANG: void, BANG_EQUAL: void, EQUAL: void, EQUAL_EQUAL: void, GREATER: void, GREATER_EQUAL: void, LESS: void, LESS_EQUAL: void, AND: void, CLASS: void, ELSE: void, FALSE: void, FUN: void, FOR: void, IF: void, NIL: void, OR: void, PRINT: void, RETURN: void, SUPER: void, THIS: void, TRUE: void, VAR: void, WHILE: void, EOF: void
+    // literals
+    IDENTIFIER: []u8,
+    STRING: []const u8,
+    NUMBER: f64,
+    FALSE: bool,
+    TRUE: bool,
+    NIL: ?void,
+    // non-literals
+    LEFT_PAREN: void,
+    RIGHT_PAREN: void,
+    LEFT_BRACE: void,
+    RIGHT_BRACE: void,
+    COMMA: void,
+    DOT: void,
+    MINUS: void,
+    PLUS: void,
+    SEMICOLON: void,
+    SLASH: void,
+    STAR: void,
+    BANG: void,
+    BANG_EQUAL: void,
+    EQUAL: void,
+    EQUAL_EQUAL: void,
+    GREATER: void,
+    GREATER_EQUAL: void,
+    LESS: void,
+    LESS_EQUAL: void,
+    AND: void,
+    CLASS: void,
+    ELSE: void,
+    FUN: void,
+    FOR: void,
+    IF: void,
+    OR: void,
+    PRINT: void,
+    RETURN: void,
+    SUPER: void,
+    THIS: void,
+    VAR: void,
+    WHILE: void,
+    EOF: void,
 };
 
 pub const Token = struct {
     token_type: TokenType,
-    lexeme: []u8,
+    lexeme: []const u8,
     literal: ?Literal,
     line: u32,
 
-    pub fn init(token_type: TokenType, lexeme: []u8, literal: ?Literal, line: u32) Token {
+    pub fn init(token_type: TokenType, lexeme: []const u8, literal: ?Literal, line: u32) Token {
         return .{
             .token_type = token_type,
             .lexeme = lexeme,
@@ -118,6 +535,8 @@ const Scanner = struct {
             },
             '/' => if (self.match('/')) {
                 while (self.peek() != '\n' and !self.isAtEnd()) _ = self.advance();
+            } else {
+                try self.addToken(.SLASH);
             },
             ' ', '\r', '\t' => void,
             '\n' => self.line += 1,
@@ -218,12 +637,12 @@ const Scanner = struct {
 };
 
 var hadError = false;
-fn report(line: u32, where: []const u8, comptime message: []const u8) void {
+fn report(line: u32, where: []const u8, message: []const u8) void {
     std.debug.print("[line {d}] Error{s}: {s}\n", .{ line, where, message });
     hadError = true;
 }
 
-fn reportErr(line: u32, comptime message: []const u8) void {
+fn reportErr(line: u32, message: []const u8) void {
     report(line, "", message);
 }
 
@@ -235,6 +654,16 @@ fn run(allocator: *Allocator, source: []u8) !void {
     var tokens = try scanner.scanTokens();
     for (tokens.items) |token| {
         std.debug.print("{?}\n", .{token});
+    }
+
+    var parser = Parser.init(allocator, tokens);
+    defer parser.deinit();
+    var result = try parser.parse();
+    if (hadError) return;
+
+    if (result) |exp| {
+        var printer = AstPrinter{};
+        printer.print(exp);
     }
 }
 
@@ -264,16 +693,44 @@ fn runPrompt(allocator: *Allocator) !void {
     }
 }
 
+test "Parser" {
+    var test_allocator = std.testing.allocator;
+    var tokens = ArrayList(Token).init(test_allocator);
+    defer tokens.deinit();
+    var parser = Parser.init(test_allocator, tokens);
+    defer parser.deinit();
+
+    try std.testing.expect(parser.isAtEnd() == true);
+    // try std.testing.expect(parser.previous() == null);
+    // try std.testing.expect(parser.advance() == null);
+    // try std.testing.expect(parser.check(.EQUAL) == false);
+    // try std.testing.expect(parser.match(([_]TokenType{.EQUAL})[0..]) == false);
+}
+
+// test "runtime" {
+//     const tokens = ArrayList(Token).init(test_allocator);
+//     var parser = Parser.init(allocator);
+//     defer parser.deinit();
+//     var ast = parser.parse(tokens);
+//     var interpreter = Interpreter.init(allocator);
+//     var result = interpreter.interpret(ast);
+// }
+
+test "AstPrinter" {
+    var test_allocator = std.testing.allocator;
+    var exp =
+        try BinaryExpr.init(test_allocator, &(try UnaryExpr.init(test_allocator, Token.init(.MINUS, "-", null, 1), &(try LiteralExpr.init(test_allocator, Literal{ .NUMBER = 123 })).expr)).expr, Token.init(.STAR, "*", null, 1), &(try GroupingExpr.init(test_allocator, &(try LiteralExpr.init(test_allocator, Literal{ .NUMBER = 45.67 })).expr)).expr);
+
+    var astp = AstPrinter{};
+    defer DeinitVisitor.init(test_allocator).deinit(&exp.expr);
+    _ = astp.print(&exp.expr);
+}
+
 pub fn main() !u8 {
     var general_purpose_allocator = std.heap.GeneralPurposeAllocator(.{}){};
     const gpa = &general_purpose_allocator.allocator;
     const args = try std.process.argsAlloc(gpa);
     defer std.process.argsFree(gpa, args);
-
-    // var vv = ValueVisitor(){};
-    // var visitor = &sv.visitor;
-    // var lit = Literal.init(.EOF);
-    // std.debug.print("StringVisitor {s}", .{visitor.visitLiteralExpr(lit)});
 
     if (args.len > 2) {
         try stdout.print("Usage: zlox [script]\n", .{});
