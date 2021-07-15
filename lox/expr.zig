@@ -3,40 +3,105 @@
 const std = @import("std");
 const ArrayList = std.ArrayList;
 const Token = @import("main.zig").Token;
-const Value = @import("main.zig").Value;
+const Literal = @import("main.zig").Literal;
 
-pub const Binary = struct {
-    left: Expr,
+pub const Expr = struct {
+    const Self = @This();
+    acceptFn: fn (self: *const Self, visitor: *Visitor) ?Literal,
+    pub fn accept(self: *const Self, visitor: *Visitor) ?Literal {
+        return self.acceptFn(self, visitor);
+    }
+}
+
+pub const Visitor = struct {
+    const Self = @This();
+    visitBinaryExprFn: fn (self: *Self, expr: BinaryExpr) ?Value,
+    visitGroupingExprFn: fn (self: *Self, expr: GroupingExpr) ?Value,
+    visitLiteralExprFn: fn (self: *Self, expr: LiteralExpr) ?Value,
+    visitUnaryExprFn: fn (self: *Self, expr: UnaryExpr) ?Value,
+
+    pub fn visitBinaryExpr(self: *Self, expr: BinaryExpr) ?Value {
+        return self.visitBinaryExprFn(self, expr);
+    };
+    pub fn visitGroupingExpr(self: *Self, expr: GroupingExpr) ?Value {
+        return self.visitGroupingExprFn(self, expr);
+    };
+    pub fn visitLiteralExpr(self: *Self, expr: LiteralExpr) ?Value {
+        return self.visitLiteralExprFn(self, expr);
+    };
+    pub fn visitUnaryExpr(self: *Self, expr: UnaryExpr) ?Value {
+        return self.visitUnaryExprFn(self, expr);
+    };
+};
+
+pub const BinaryExpr = struct {
+    const Self = @This();
+    expr: Expr = Expr{ .acceptFn = accept },
+
+    left: *Expr,
     operator: Token,
-    right: Expr,
+    right: *Expr,
 
-    pub fn init(left: Expr, operator: Token, right: Expr) Binary {
-        return .{ .left = left, .operator = operator , .right = right };
+    pub fn init(allocator: *Allocator, left: *Expr, operator: Token, right: *Expr) !*Self {
+        const self = try allocator.create(Self);
+        self.* = .{ .left = left, .operator = operator, .right = right };
+        return self;
+    }
+    pub fn accept(expr: *const Expr, visitor: *Visitor) ?Value {
+        const self = @fieldParentPtr(Self, "expr", expr);
+        return visitor.visitBinaryExpr(self.*);
     }
 };
 
-pub const Grouping = struct {
-    expression: Expr,
+pub const GroupingExpr = struct {
+    const Self = @This();
+    expr: Expr = Expr{ .acceptFn = accept },
 
-    pub fn init(expression: Expr) Grouping {
-        return .{ .expression = expression};
+    expression: *Expr,
+
+    pub fn init(allocator: *Allocator, expression: *Expr) !*Self {
+        const self = try allocator.create(Self);
+        self.* = .{ .expression = expression };
+        return self;
+    }
+    pub fn accept(expr: *const Expr, visitor: *Visitor) ?Value {
+        const self = @fieldParentPtr(Self, "expr", expr);
+        return visitor.visitGroupingExpr(self.*);
     }
 };
 
-pub const Literal = struct {
+pub const LiteralExpr = struct {
+    const Self = @This();
+    expr: Expr = Expr{ .acceptFn = accept },
+
     value: Value,
 
-    pub fn init(value: Value) Literal {
-        return .{ .value = value};
+    pub fn init(allocator: *Allocator, value: Value) !*Self {
+        const self = try allocator.create(Self);
+        self.* = .{ .value = value };
+        return self;
+    }
+    pub fn accept(expr: *const Expr, visitor: *Visitor) ?Value {
+        const self = @fieldParentPtr(Self, "expr", expr);
+        return visitor.visitLiteralExpr(self.*);
     }
 };
 
-pub const Unary = struct {
-    operator: Token,
-    right: Expr,
+pub const UnaryExpr = struct {
+    const Self = @This();
+    expr: Expr = Expr{ .acceptFn = accept },
 
-    pub fn init(operator: Token, right: Expr) Unary {
-        return .{ .operator = operator, .right = right };
+    operator: Token,
+    right: *Expr,
+
+    pub fn init(allocator: *Allocator, operator: Token, right: *Expr) !*Self {
+        const self = try allocator.create(Self);
+        self.* = .{ .operator = operator, .right = right };
+        return self;
+    }
+    pub fn accept(expr: *const Expr, visitor: *Visitor) ?Value {
+        const self = @fieldParentPtr(Self, "expr", expr);
+        return visitor.visitUnaryExpr(self.*);
     }
 };
 
