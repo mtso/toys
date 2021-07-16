@@ -4,7 +4,7 @@ const ArrayList = std.ArrayList;
 const ComptimeStringMap = std.ComptimeStringMap;
 
 const Expr = @import("expr.zig").Expr;
-const Visitor = @import("expr.zig").Visitor;
+const ExprVisitor = @import("expr.zig").Visitor;
 const LiteralExpr = @import("expr.zig").LiteralExpr;
 const GroupingExpr = @import("expr.zig").GroupingExpr;
 const BinaryExpr = @import("expr.zig").BinaryExpr;
@@ -294,7 +294,7 @@ pub const Parser = struct {
 /// Deinitializes an ast.
 pub const DeinitVisitor = struct {
     const Self = @This();
-    visitor: Visitor = Visitor{
+    visitor: ExprVisitor = ExprVisitor{
         .visitBinaryExprFn = visitBinaryExpr,
         .visitGroupingExprFn = visitGroupingExpr,
         .visitLiteralExprFn = visitLiteralExpr,
@@ -308,25 +308,25 @@ pub const DeinitVisitor = struct {
     pub fn deinit(self: *Self, expr: *Expr) void {
         _ = expr.accept(&self.visitor);
     }
-    pub fn visitBinaryExpr(visitor: *Visitor, expr: BinaryExpr) ?Literal {
+    pub fn visitBinaryExpr(visitor: *ExprVisitor, expr: BinaryExpr) ?Literal {
         const self = @fieldParentPtr(Self, "visitor", visitor);
         _ = expr.left.accept(visitor);
         _ = expr.right.accept(visitor);
         _ = self.allocator.destroy(&expr);
         return null;
     }
-    pub fn visitGroupingExpr(visitor: *Visitor, expr: GroupingExpr) ?Literal {
+    pub fn visitGroupingExpr(visitor: *ExprVisitor, expr: GroupingExpr) ?Literal {
         const self = @fieldParentPtr(Self, "visitor", visitor);
         _ = expr.expression.accept(visitor);
         _ = self.allocator.destroy(&expr);
         return null;
     }
-    pub fn visitLiteralExpr(visitor: *Visitor, expr: LiteralExpr) ?Literal {
+    pub fn visitLiteralExpr(visitor: *ExprVisitor, expr: LiteralExpr) ?Literal {
         const self = @fieldParentPtr(Self, "visitor", visitor);
         self.allocator.destroy(&expr);
         return null;
     }
-    pub fn visitUnaryExpr(visitor: *Visitor, expr: UnaryExpr) ?Literal {
+    pub fn visitUnaryExpr(visitor: *ExprVisitor, expr: UnaryExpr) ?Literal {
         const self = @fieldParentPtr(Self, "visitor", visitor);
         _ = expr.right.accept(visitor);
         _ = self.allocator.destroy(&expr);
@@ -336,7 +336,7 @@ pub const DeinitVisitor = struct {
 
 pub const AstPrinter = struct {
     const Self = @This();
-    visitor: Visitor = Visitor{
+    visitor: ExprVisitor = ExprVisitor{
         .visitBinaryExprFn = visitBinaryExpr,
         .visitGroupingExprFn = visitGroupingExpr,
         .visitLiteralExprFn = visitLiteralExpr,
@@ -347,7 +347,7 @@ pub const AstPrinter = struct {
         _ = expr.accept(&self.visitor);
         std.debug.print("\n", .{});
     }
-    pub fn visitBinaryExpr(visitor: *Visitor, expr: BinaryExpr) ?Literal {
+    pub fn visitBinaryExpr(visitor: *ExprVisitor, expr: BinaryExpr) ?Literal {
         std.debug.print("({s} ", .{expr.operator.lexeme});
         _ = expr.left.accept(visitor);
         std.debug.print(" ", .{});
@@ -355,13 +355,13 @@ pub const AstPrinter = struct {
         std.debug.print(")", .{});
         return null;
     }
-    pub fn visitGroupingExpr(visitor: *Visitor, expr: GroupingExpr) ?Literal {
+    pub fn visitGroupingExpr(visitor: *ExprVisitor, expr: GroupingExpr) ?Literal {
         std.debug.print("(group ", .{});
         _ = expr.expression.accept(visitor);
         std.debug.print(")", .{});
         return null;
     }
-    pub fn visitLiteralExpr(visitor: *Visitor, expr: LiteralExpr) ?Literal {
+    pub fn visitLiteralExpr(visitor: *ExprVisitor, expr: LiteralExpr) ?Literal {
         _ = switch (expr.value) {
             .STRING => |s| std.debug.print("{s}", .{s}),
             .NUMBER => |n| std.debug.print("{e}", .{n}),
@@ -370,7 +370,7 @@ pub const AstPrinter = struct {
         };
         return expr.value;
     }
-    pub fn visitUnaryExpr(visitor: *Visitor, expr: UnaryExpr) ?Literal {
+    pub fn visitUnaryExpr(visitor: *ExprVisitor, expr: UnaryExpr) ?Literal {
         std.debug.print("({s} ", .{expr.operator.lexeme});
         _ = expr.right.accept(visitor);
         std.debug.print(")", .{});
@@ -422,7 +422,7 @@ test "deinit" {
 
 pub const Interpreter = struct {
     const Self = @This();
-    visitor: Visitor = Visitor{
+    visitor: ExprVisitor = ExprVisitor{
         .visitBinaryExprFn = visitBinaryExpr,
         .visitGroupingExprFn = visitGroupingExpr,
         .visitLiteralExprFn = visitLiteralExpr,
@@ -460,7 +460,7 @@ pub const Interpreter = struct {
     fn evaluate(self: *Self, expr: *Expr) ?Literal {
         return expr.accept(&self.visitor);
     }
-    pub fn visitBinaryExpr(visitor: *Visitor, expr: BinaryExpr) ?Literal {
+    pub fn visitBinaryExpr(visitor: *ExprVisitor, expr: BinaryExpr) ?Literal {
         const self = @fieldParentPtr(Self, "visitor", visitor);
         const left = self.evaluate(expr.left) orelse return null;
         const right = self.evaluate(expr.right) orelse return null;
@@ -494,14 +494,14 @@ pub const Interpreter = struct {
         }
         return null;
     }
-    pub fn visitGroupingExpr(visitor: *Visitor, expr: GroupingExpr) ?Literal {
+    pub fn visitGroupingExpr(visitor: *ExprVisitor, expr: GroupingExpr) ?Literal {
         const self = @fieldParentPtr(Self, "visitor", visitor);
         return self.evaluate(expr.expression);
     }
-    pub fn visitLiteralExpr(visitor: *Visitor, expr: LiteralExpr) ?Literal {
+    pub fn visitLiteralExpr(visitor: *ExprVisitor, expr: LiteralExpr) ?Literal {
         return expr.value;
     }
-    pub fn visitUnaryExpr(visitor: *Visitor, expr: UnaryExpr) ?Literal {
+    pub fn visitUnaryExpr(visitor: *ExprVisitor, expr: UnaryExpr) ?Literal {
         const self = @fieldParentPtr(Self, "visitor", visitor);
         const right = self.evaluate(expr.right) orelse return null;
         if (!self.checkNumberOperand(expr.operator, right)) return null;
@@ -624,14 +624,13 @@ test "interpreter" {
 
 const TokenType = enum {
 // Single-character tokens.
-    LEFT_PAREN, RIGHT_PAREN, LEFT_BRACE, RIGHT_BRACE, COMMA, DOT, MINUS, PLUS, SEMICOLON, SLASH, STAR,
-    // One or two character tokens.
-    BANG, BANG_EQUAL, EQUAL, EQUAL_EQUAL, GREATER, GREATER_EQUAL, LESS, LESS_EQUAL,
-    // Literals.
-    IDENTIFIER, STRING, NUMBER,
-    // Keywords.
-    AND, CLASS, ELSE, FALSE, FUN, FOR, IF, NIL, OR, PRINT, RETURN, SUPER, THIS, TRUE, VAR, WHILE, EOF
-};
+LEFT_PAREN, RIGHT_PAREN, LEFT_BRACE, RIGHT_BRACE, COMMA, DOT, MINUS, PLUS, SEMICOLON, SLASH, STAR,
+// One or two character tokens.
+BANG, BANG_EQUAL, EQUAL, EQUAL_EQUAL, GREATER, GREATER_EQUAL, LESS, LESS_EQUAL,
+// Literals.
+IDENTIFIER, STRING, NUMBER,
+// Keywords.
+AND, CLASS, ELSE, FALSE, FUN, FOR, IF, NIL, OR, PRINT, RETURN, SUPER, THIS, TRUE, VAR, WHILE, EOF };
 
 pub const Value = union {
     Identifier: []u8,
