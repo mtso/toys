@@ -2,3 +2,5 @@ zig-cache/
 .zig-cache/
 zig-macos-x86_64-0.8.0-dev.2729+87dae0ce9 zig-macos-x86_64-0.8.0-dev.2729+87dae0ce9.tar.xz
 *.wasm
+*.tar.xz
+zig-macos*/
