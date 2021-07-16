@@ -22,16 +22,11 @@ test "Parser recursive-descent" {
     try tokens.append(Token.init(.EQUAL_EQUAL, "==", .EQUAL_EQUAL, 1));
     try tokens.append(Token.init(.NUMBER, "4.0", Literal{ .NUMBER = 4.0 }, 1));
     try tokens.append(Token.init(.RIGHT_PAREN, ")", .RIGHT_PAREN, 1));
-    // try tokens.append(Token.init(.FALSE, "false", Literal{.FALSE=false}, 1));
     defer tokens.deinit();
     var parser = Parser.init(test_allocator, tokens);
     defer parser.deinit();
-
     // Should succeed.
     _ = try parser.parse();
-    // var printer = AstPrinter{};
-    // _ = printer.print(exp);
-    // std.debug.print("\nwhat: {any}\n", .{exp});
 }
 
 // missing_literal is for Literal Tokens
@@ -135,7 +130,7 @@ pub const Parser = struct {
     }
 
     fn unary(self: *Parser) Err!*Expr {
-        while (self.matchAny(([_]TokenType{ .SLASH, .STAR })[0..])) {
+        while (self.matchAny(([_]TokenType{ .BANG, .MINUS })[0..])) {
             const operator = try self.previous();
             const right = try self.unary();
             const exp = UnaryExpr.init(self.allocator, operator, right) catch {
@@ -146,6 +141,7 @@ pub const Parser = struct {
         return try self.primary();
     }
 
+    // TODO: Convert Literal to Value here or have another converter in the Interpreter???
     fn primary(self: *Parser) Err!*Expr {
         if (self.match(.FALSE)) {
             const exp = LiteralExpr.init(self.allocator, Literal{ .FALSE = false }) catch {
@@ -382,6 +378,250 @@ pub const AstPrinter = struct {
     }
 };
 
+test "eq" {
+    const test_allocator = std.testing.allocator;
+    var interpreter = Interpreter.init(test_allocator);
+    defer interpreter.deinit();
+    const lit = Literal{ .STRING = "what" };
+    const lit2 = Literal{ .STRING = "what" };
+    try std.testing.expect(interpreter.isEqual(lit, lit2));
+}
+
+test "num" {
+    const test_allocator = std.testing.allocator;
+    var tokens = ArrayList(Token).init(test_allocator);
+    try tokens.append(Token.init(.MINUS, "-", .MINUS, 1));
+    try tokens.append(Token.init(.NUMBER, "3.0", Literal{ .NUMBER = 3.0 }, 1));
+    defer tokens.deinit();
+    var parser = Parser.init(test_allocator, tokens);
+    defer parser.deinit();
+    const exp = (try parser.parse()).?;
+    var interpreter = Interpreter.init(test_allocator);
+    var result = interpreter.evaluate(exp).?;
+    switch (result) {
+        .NUMBER => |n| try std.testing.expect(-3.0 == n),
+        else => try std.testing.expect(false),
+    }
+}
+
+test "deinit" {
+    const test_allocator = std.testing.allocator;
+    var tokens = ArrayList(Token).init(test_allocator);
+    defer tokens.deinit();
+    try tokens.append(Token.init(.STRING, "hello ", Literal{ .STRING = "hello " }, 1));
+    try tokens.append(Token.init(.PLUS, "+", .PLUS, 1));
+    try tokens.append(Token.init(.STRING, "world", Literal{ .STRING = "world" }, 1));
+    var parser = Parser.init(test_allocator, tokens);
+    defer parser.deinit();
+    const exp = (try parser.parse()).?;
+    var interpreter = Interpreter.init(test_allocator);
+    defer interpreter.deinit();
+    const result = interpreter.evaluate(exp);
+    try std.testing.expect(1 == interpreter.strings.items.len);
+}
+
+pub const Interpreter = struct {
+    const Self = @This();
+    visitor: Visitor = Visitor{
+        .visitBinaryExprFn = visitBinaryExpr,
+        .visitGroupingExprFn = visitGroupingExpr,
+        .visitLiteralExprFn = visitLiteralExpr,
+        .visitUnaryExprFn = visitUnaryExpr,
+    },
+    allocator: *Allocator,
+    strings: ArrayList([]const u8),
+    error_token: ?Token = null,
+    error_message: ?[]const u8 = null,
+
+    pub fn init(allocator: *Allocator) Self {
+        return .{ .allocator = allocator, .strings = ArrayList([]const u8).init(allocator) };
+    }
+    pub fn deinit(self: *Self) void {
+        for (self.strings.items) |s| {
+            self.allocator.free(s);
+        }
+        self.strings.deinit();
+    }
+    /// Returns true if evaluation succeeded, false if there was a runtime error.
+    /// FIXME: for now, a null value means that there was a runtime error! consider error union.
+    pub fn interpret(self: *Self, expr: *Expr) bool {
+        self.error_token = null;
+        self.error_message = null;
+        const value = expr.accept(&self.visitor);
+        if (null == value) {
+            std.debug.print("{s}\n[line {d}]\n", .{ self.error_message, self.error_token.?.line });
+            return false;
+        }
+        stdout.print("{?}\n", .{value}) catch {
+            return false;
+        };
+        return true;
+    }
+    fn evaluate(self: *Self, expr: *Expr) ?Literal {
+        return expr.accept(&self.visitor);
+    }
+    pub fn visitBinaryExpr(visitor: *Visitor, expr: BinaryExpr) ?Literal {
+        const self = @fieldParentPtr(Self, "visitor", visitor);
+        const left = self.evaluate(expr.left) orelse return null;
+        const right = self.evaluate(expr.right) orelse return null;
+
+        switch (expr.operator.token_type) {
+            .EQUAL_EQUAL => return self.toBoolean(self.isEqual(left, right)),
+            .BANG_EQUAL => return self.toBoolean(!self.isEqual(left, right)),
+            .MINUS, .SLASH, .STAR, .GREATER, .GREATER_EQUAL, .LESS, .LESS_EQUAL => {
+                if (!self.checkNumberOperands(expr.operator, left, right)) return null;
+                const leftN = self.number(left) orelse return null;
+                const rightN = self.number(right) orelse return null;
+                switch (expr.operator.token_type) {
+                    .GREATER => return self.toBoolean(leftN > rightN),
+                    .GREATER_EQUAL => return self.toBoolean(leftN >= rightN),
+                    .LESS => return self.toBoolean(leftN < rightN),
+                    .LESS_EQUAL => return self.toBoolean(leftN <= rightN),
+                    .MINUS => return Literal{ .NUMBER = leftN - rightN },
+                    .SLASH => return Literal{ .NUMBER = leftN / rightN },
+                    .STAR => return Literal{ .NUMBER = leftN * rightN },
+                    else => return null,
+                }
+            },
+            .PLUS => if (self.number(left)) |leftN| {
+                const rightN = self.number(right) orelse return self.save_error(expr.operator, "Operands must be two numbers or two strings.");
+                return Literal{ .NUMBER = leftN + rightN };
+            } else if (self.string(left)) |leftS| {
+                const rightS = self.string(right) orelse return self.save_error(expr.operator, "Operands must be two numbers or two strings.");
+                return Literal{ .STRING = self.create_joined_string(leftS, rightS) orelse return null };
+            },
+            else => return null,
+        }
+        return null;
+    }
+    pub fn visitGroupingExpr(visitor: *Visitor, expr: GroupingExpr) ?Literal {
+        const self = @fieldParentPtr(Self, "visitor", visitor);
+        return self.evaluate(expr.expression);
+    }
+    pub fn visitLiteralExpr(visitor: *Visitor, expr: LiteralExpr) ?Literal {
+        return expr.value;
+    }
+    pub fn visitUnaryExpr(visitor: *Visitor, expr: UnaryExpr) ?Literal {
+        const self = @fieldParentPtr(Self, "visitor", visitor);
+        const right = self.evaluate(expr.right) orelse return null;
+        if (!self.checkNumberOperand(expr.operator, right)) return null;
+
+        _ = switch (expr.operator.token_type) {
+            .BANG => return self.toBoolean(!self.isTruthy(right)),
+            .MINUS => return Literal{ .NUMBER = -(self.number(right) orelse return null) },
+            else => null,
+        };
+
+        return null;
+    }
+    pub fn checkNumberOperand(self: *Self, operator: Token, operand: Literal) bool {
+        _ = self.number(operand) orelse {
+            _ = self.save_error(operator, "Operand must be a number.");
+            return false;
+        };
+        return true;
+    }
+    pub fn checkNumberOperands(self: *Self, operator: Token, left: Literal, right: Literal) bool {
+        _ = self.number(left) orelse {
+            _ = self.save_error(operator, "Operands must be numbers.");
+            return false;
+        };
+        _ = self.number(right) orelse {
+            _ = self.save_error(operator, "Operands must be numbers.");
+            return false;
+        };
+        return true;
+    }
+    fn isEqual(self: *Self, left: Literal, right: Literal) bool {
+        if (self.number(left)) |leftN| {
+            const rightN = self.number(right) orelse return false;
+            return leftN == rightN;
+        } else if (self.string(left)) |leftS| {
+            const rightS = self.string(right) orelse return false;
+            return std.mem.eql(u8, leftS, rightS);
+        } else if (self.boolean(left)) |leftB| {
+            const rightB = self.boolean(right) orelse return false;
+            return leftB == rightB;
+        } else if (Literal.NIL == left and Literal.NIL == right) {
+            return true;
+        }
+        return false;
+    }
+    fn toBoolean(self: *Self, value: bool) Literal {
+        if (value) {
+            return Literal{ .TRUE = true };
+        } else {
+            return Literal{ .FALSE = false };
+        }
+    }
+    fn boolean(self: *Self, literal: Literal) ?bool {
+        switch (literal) {
+            .TRUE, .FALSE => |v| return v,
+            else => return null,
+        }
+    }
+    fn number(self: *Self, literal: Literal) ?f64 {
+        switch (literal) {
+            .NUMBER => |n| return n,
+            else => return null,
+        }
+    }
+    fn string(self: *Self, literal: Literal) ?[]const u8 {
+        switch (literal) {
+            .STRING => |s| return s,
+            else => return null,
+        }
+    }
+    fn isTruthy(self: *Self, literal: Literal) bool {
+        switch (literal) {
+            .TRUE, .STRING, .NUMBER => return true,
+            .FALSE => return false,
+            else => return false,
+        }
+    }
+    fn create_joined_string(self: *Self, left: []const u8, right: []const u8) ?[]u8 {
+        var joined = self.allocator.alloc(u8, left.len + right.len) catch |err| {
+            std.debug.print("Failed to alloc string, returning null. {e}", .{err});
+            return null;
+        };
+        _ = std.fmt.bufPrint(joined, "{s}{s}", .{ left, right }) catch |err| {
+            std.debug.print("Failed to format string, returning null. {e}", .{err});
+            return null;
+        };
+        _ = self.strings.append(joined) catch |err| {
+            std.debug.print("Failed to store string, returning null. {e}", .{err});
+            return null;
+        };
+        return joined;
+    }
+    fn save_error(self: *Self, token: Token, message: []const u8) ?Literal {
+        self.error_token = token;
+        self.error_message = message;
+        return null;
+    }
+};
+
+test "interpreter" {
+    const test_allocator = std.testing.allocator;
+    var tokens = ArrayList(Token).init(test_allocator);
+    try tokens.append(Token.init(.LEFT_PAREN, "(", .LEFT_PAREN, 1));
+    try tokens.append(Token.init(.NUMBER, "2.0", Literal{ .NUMBER = 2.0 }, 1));
+    try tokens.append(Token.init(.GREATER, ">", .GREATER, 1));
+    try tokens.append(Token.init(.NUMBER, "3.0", Literal{ .NUMBER = 3.0 }, 1));
+    try tokens.append(Token.init(.EQUAL_EQUAL, "==", .EQUAL_EQUAL, 1));
+    try tokens.append(Token.init(.NUMBER, "4.0", Literal{ .NUMBER = 4.0 }, 1));
+    try tokens.append(Token.init(.RIGHT_PAREN, ")", .RIGHT_PAREN, 1));
+    defer tokens.deinit();
+    var parser = Parser.init(test_allocator, tokens);
+    defer parser.deinit();
+
+    // Should succeed.
+    const exp = (try parser.parse()) orelse return;
+    var interpreter = Interpreter.init(test_allocator);
+    defer interpreter.deinit();
+    try std.testing.expect(interpreter.interpret(exp));
+}
+
 const TokenType = enum {
 // Single-character tokens.
     LEFT_PAREN, RIGHT_PAREN, LEFT_BRACE, RIGHT_BRACE, COMMA, DOT, MINUS, PLUS, SEMICOLON, SLASH, STAR,
@@ -393,7 +633,27 @@ const TokenType = enum {
     AND, CLASS, ELSE, FALSE, FUN, FOR, IF, NIL, OR, PRINT, RETURN, SUPER, THIS, TRUE, VAR, WHILE, EOF
 };
 
+pub const Value = union {
+    Identifier: []u8,
+    String: []const u8,
+    Number: f64,
+    Bool: bool,
+    Nil: ?void,
+    Any: anytype,
+};
+
 pub const Literal = union(TokenType) {
+    pub fn format(value: Literal, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        switch (value) {
+            .STRING => |s| try writer.print("\"{s}\"", .{s}),
+            .NUMBER => |e| try writer.print("{e}", .{e}),
+            .TRUE, .FALSE => |b| try writer.print("{any}", .{b}),
+            .NIL => try writer.print("nil", .{}),
+            .IDENTIFIER => |s| try writer.print("ID({s})", .{s}),
+            else => try writer.print("Literal({d})", .{@enumToInt(value)}),
+        }
+    }
+
     // literals
     IDENTIFIER: []u8,
     STRING: []const u8,
@@ -402,39 +662,39 @@ pub const Literal = union(TokenType) {
     TRUE: bool,
     NIL: ?void,
     // non-literals
-    LEFT_PAREN: void,
-    RIGHT_PAREN: void,
-    LEFT_BRACE: void,
-    RIGHT_BRACE: void,
-    COMMA: void,
-    DOT: void,
-    MINUS: void,
-    PLUS: void,
-    SEMICOLON: void,
-    SLASH: void,
-    STAR: void,
-    BANG: void,
-    BANG_EQUAL: void,
-    EQUAL: void,
-    EQUAL_EQUAL: void,
-    GREATER: void,
-    GREATER_EQUAL: void,
-    LESS: void,
-    LESS_EQUAL: void,
-    AND: void,
-    CLASS: void,
-    ELSE: void,
-    FUN: void,
-    FOR: void,
-    IF: void,
-    OR: void,
-    PRINT: void,
-    RETURN: void,
-    SUPER: void,
-    THIS: void,
-    VAR: void,
-    WHILE: void,
-    EOF: void,
+    LEFT_PAREN,
+    RIGHT_PAREN,
+    LEFT_BRACE,
+    RIGHT_BRACE,
+    COMMA,
+    DOT,
+    MINUS,
+    PLUS,
+    SEMICOLON,
+    SLASH,
+    STAR,
+    BANG,
+    BANG_EQUAL,
+    EQUAL,
+    EQUAL_EQUAL,
+    GREATER,
+    GREATER_EQUAL,
+    LESS,
+    LESS_EQUAL,
+    AND,
+    CLASS,
+    ELSE,
+    FUN,
+    FOR,
+    IF,
+    OR,
+    PRINT,
+    RETURN,
+    SUPER,
+    THIS,
+    VAR,
+    WHILE,
+    EOF,
 };
 
 pub const Token = struct {
@@ -646,25 +906,34 @@ fn reportErr(line: u32, message: []const u8) void {
     report(line, "", message);
 }
 
-fn run(allocator: *Allocator, source: []u8) !void {
+fn run(allocator: *Allocator, source: []u8) !bool {
     var list = ArrayList(Token).init(allocator);
     defer list.deinit();
 
     var scanner = Scanner.init(source, list);
-    var tokens = try scanner.scanTokens();
-    for (tokens.items) |token| {
-        std.debug.print("{?}\n", .{token});
+    const tokens = try scanner.scanTokens();
+    if (false) {
+        for (tokens.items) |token| {
+            std.debug.print("{?}\n", .{token});
+        }
     }
 
     var parser = Parser.init(allocator, tokens);
     defer parser.deinit();
-    var result = try parser.parse();
-    if (hadError) return;
 
-    if (result) |exp| {
+    const result = try parser.parse();
+    if (hadError) return false;
+    if (null == result) return false;
+
+    if (false) {
         var printer = AstPrinter{};
-        printer.print(exp);
+        printer.print(result.?);
     }
+
+    var interpreter = Interpreter.init(allocator);
+    defer interpreter.deinit();
+
+    return interpreter.interpret(result.?);
 }
 
 fn runFile(allocator: *Allocator, path: []const u8) !void {
@@ -672,11 +941,10 @@ fn runFile(allocator: *Allocator, path: []const u8) !void {
     defer file.close();
 
     const contents = try file.reader().readAllAlloc(allocator, 4096 * 16);
-    try run(allocator, contents);
+    const success = try run(allocator, contents);
 
-    if (hadError) {
-        std.os.exit(65);
-    }
+    if (hadError) std.os.exit(65); // parse errror
+    if (!success) std.os.exit(70); // runtime error
 }
 
 fn promptStmt(buf: []u8) !?[]u8 {
@@ -688,33 +956,10 @@ fn promptStmt(buf: []u8) !?[]u8 {
 fn runPrompt(allocator: *Allocator) !void {
     var buf: [4096]u8 = undefined;
     while (try promptStmt(&buf)) |line| {
-        try run(allocator, line);
+        _ = try run(allocator, line);
         hadError = false;
     }
 }
-
-test "Parser" {
-    var test_allocator = std.testing.allocator;
-    var tokens = ArrayList(Token).init(test_allocator);
-    defer tokens.deinit();
-    var parser = Parser.init(test_allocator, tokens);
-    defer parser.deinit();
-
-    try std.testing.expect(parser.isAtEnd() == true);
-    // try std.testing.expect(parser.previous() == null);
-    // try std.testing.expect(parser.advance() == null);
-    // try std.testing.expect(parser.check(.EQUAL) == false);
-    // try std.testing.expect(parser.match(([_]TokenType{.EQUAL})[0..]) == false);
-}
-
-// test "runtime" {
-//     const tokens = ArrayList(Token).init(test_allocator);
-//     var parser = Parser.init(allocator);
-//     defer parser.deinit();
-//     var ast = parser.parse(tokens);
-//     var interpreter = Interpreter.init(allocator);
-//     var result = interpreter.interpret(ast);
-// }
 
 test "AstPrinter" {
     var test_allocator = std.testing.allocator;
