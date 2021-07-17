@@ -15,17 +15,19 @@ pub fn main() !void {
     var general_purpose_allocator = std.heap.GeneralPurposeAllocator(.{}){};
     const gpa = &general_purpose_allocator.allocator;
 
+    var stmts = ArrayList([]const u8).init(gpa);
+    defer stmts.deinit();
+    try stmts.append("ExpressionStmt | expression: *Expr");
+    try stmts.append("PrintStmt      | expression: *Expr");
+    try stmts.append("VarStmt        | name: Token, initializer: ?*Expr");
+
     var exprs = ArrayList([]const u8).init(gpa);
     defer exprs.deinit();
     try exprs.append("BinaryExpr   | left: *Expr, operator: Token, right: *Expr");
     try exprs.append("GroupingExpr | expression: *Expr");
     try exprs.append("LiteralExpr  | value: Value");
     try exprs.append("UnaryExpr    | operator: Token, right: *Expr");
-
-    var stmts = ArrayList([]const u8).init(gpa);
-    defer stmts.deinit();
-    try stmts.append("ExpressionStmt | expression: *Expr");
-    try stmts.append("PrintStmt      | expression: *Expr");
+    try exprs.append("VariableExpr | name: Token");
 
     const exprFile = try std.fs.cwd().createFile("expr.zig", .{});
     defer exprFile.close();
@@ -46,10 +48,11 @@ fn defineStmt(out: anytype, importName: []const u8, baseName: []const u8, little
         \\const Allocator = std.mem.Allocator;
         \\const ArrayList = std.ArrayList;
         \\const Expr = @import("{s}").Expr;
+        \\const Token = @import("{s}").Token;
         \\
         \\
     ;
-    try out.print(header, .{importName});
+    try out.print(header, .{ importName, importName });
 
     try defineBase(out, baseName, returnType);
     try defineVisitor(out, littleBaseName, types, returnType);
@@ -69,8 +72,8 @@ fn defineExpr(out: anytype, importName: []const u8, baseName: []const u8, little
         \\const std = @import("std");
         \\const Allocator = std.mem.Allocator;
         \\const ArrayList = std.ArrayList;
-        \\const Token = @import("{s}").Token;
         \\const Value = @import("{s}").Value;
+        \\pub const Token = @import("{s}").Token; // concession for single import name
         \\
         \\
     ;

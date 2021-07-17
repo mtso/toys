@@ -1,3 +1,5 @@
 print("Hello world");
 3+4;
 print("why");
+var a = 1;
+print(a);

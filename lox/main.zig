@@ -10,11 +10,267 @@ const LiteralExpr = @import("expr.zig").LiteralExpr;
 const GroupingExpr = @import("expr.zig").GroupingExpr;
 const BinaryExpr = @import("expr.zig").BinaryExpr;
 const UnaryExpr = @import("expr.zig").UnaryExpr;
+const VariableExpr = @import("expr.zig").VariableExpr;
 
 const Stmt = @import("stmt.zig").Stmt;
 const StmtVisitor = @import("stmt.zig").Visitor;
 const ExpressionStmt = @import("stmt.zig").ExpressionStmt;
 const PrintStmt = @import("stmt.zig").PrintStmt;
+const VarStmt = @import("stmt.zig").VarStmt;
+
+const Environment = @import("environment.zig").Environment;
+
+// ===========
+// Interpreter
+// ===========
+
+// missing_literal is for Literal Tokens
+pub const LoxError = error{ invalid_syntax, alloc_err, missing_literal, runtime_error };
+
+pub const Interpreter = struct {
+    const Self = @This();
+    exprVisitor: ExprVisitor = ExprVisitor{
+        .visitBinaryExprFn = visitBinaryExpr,
+        .visitGroupingExprFn = visitGroupingExpr,
+        .visitLiteralExprFn = visitLiteralExpr,
+        .visitUnaryExprFn = visitUnaryExpr,
+        .visitVariableExprFn = visitVariableExpr,
+    },
+    stmtVisitor: StmtVisitor = StmtVisitor{
+        .visitPrintStmtFn = visitPrintStmt,
+        .visitExpressionStmtFn = visitExpressionStmt,
+        .visitVarStmtFn = visitVarStmt,
+    },
+    allocator: *Allocator,
+    environment: Environment,
+    strings: ArrayList([]const u8),
+    error_token: ?Token = null,
+    error_message: ?[]const u8 = null,
+
+    pub fn init(allocator: *Allocator) Self {
+        return .{ .allocator = allocator, .strings = ArrayList([]const u8).init(allocator), .environment = Environment.init(allocator) };
+    }
+    pub fn deinit(self: *Self) void {
+        for (self.strings.items) |s| {
+            self.allocator.free(s);
+        }
+        self.strings.deinit();
+        self.environment.deinit();
+    }
+    pub fn interpret(self: *Self, statements: ArrayList(*Stmt)) !void {
+        for (statements.items) |statement| {
+            try self.execute(statement);
+        }
+    }
+    fn execute(self: *Self, stmt: *Stmt) !void {
+        try stmt.accept(&self.stmtVisitor);
+    }
+    fn evaluate(self: *Self, expr: *Expr) ?Value {
+        return expr.accept(&self.exprVisitor);
+    }
+    pub fn visitExpressionStmt(visitor: *StmtVisitor, stmt: ExpressionStmt) !void {
+        const self = @fieldParentPtr(Self, "stmtVisitor", visitor);
+        _ = self.evaluate(stmt.expression) orelse return LoxError.runtime_error;
+    }
+    pub fn visitPrintStmt(visitor: *StmtVisitor, stmt: PrintStmt) !void {
+        const self = @fieldParentPtr(Self, "stmtVisitor", visitor);
+        const value = self.evaluate(stmt.expression) orelse return LoxError.runtime_error;
+        stdout.print("{?}\n", .{value}) catch |err| return LoxError.runtime_error;
+    }
+    pub fn visitVarStmt(visitor: *StmtVisitor, stmt: VarStmt) !void {
+        const self = @fieldParentPtr(Self, "stmtVisitor", visitor);
+        if (stmt.initializer) |ini| {
+            if (self.evaluate(ini)) |value| {
+                return try self.environment.define(stmt.name.lexeme, value);
+            }
+        }
+        try self.environment.define(stmt.name.lexeme, Value{ .Nil = null });
+    }
+    pub fn visitBinaryExpr(visitor: *ExprVisitor, expr: BinaryExpr) ?Value {
+        const self = @fieldParentPtr(Self, "exprVisitor", visitor);
+        const left = self.evaluate(expr.left) orelse return null;
+        const right = self.evaluate(expr.right) orelse return null;
+
+        switch (expr.operator.token_type) {
+            .EQUAL_EQUAL => return self.toBoolValue(self.isEqual(left, right)),
+            .BANG_EQUAL => return self.toBoolValue(!self.isEqual(left, right)),
+            .MINUS, .SLASH, .STAR, .GREATER, .GREATER_EQUAL, .LESS, .LESS_EQUAL => {
+                if (!self.checkNumberOperands(expr.operator, left, right)) return null;
+                const leftN = self.number(left) orelse return null;
+                const rightN = self.number(right) orelse return null;
+
+                switch (expr.operator.token_type) {
+                    .GREATER => return self.toBoolValue(leftN > rightN),
+                    .GREATER_EQUAL => return self.toBoolValue(leftN >= rightN),
+                    .LESS => return self.toBoolValue(leftN < rightN),
+                    .LESS_EQUAL => return self.toBoolValue(leftN <= rightN),
+                    .MINUS => return Value{ .Number = leftN - rightN },
+                    .SLASH => return Value{ .Number = leftN / rightN },
+                    .STAR => return Value{ .Number = leftN * rightN },
+                    else => return null,
+                }
+            },
+            .PLUS => if (self.number(left)) |leftN| {
+                const rightN = self.number(right) orelse return self.save_error(expr.operator, "Operands must be two numbers or two strings.");
+                return Value{ .Number = leftN + rightN };
+            } else if (self.string(left)) |leftS| {
+                const rightS = self.string(right) orelse return self.save_error(expr.operator, "Operands must be two numbers or two strings.");
+                return Value{ .String = self.create_joined_string(leftS, rightS) orelse return null };
+            },
+            else => return null,
+        }
+        return null;
+    }
+    pub fn visitGroupingExpr(visitor: *ExprVisitor, expr: GroupingExpr) ?Value {
+        const self = @fieldParentPtr(Self, "exprVisitor", visitor);
+        return self.evaluate(expr.expression);
+    }
+    pub fn visitLiteralExpr(visitor: *ExprVisitor, expr: LiteralExpr) ?Value {
+        return expr.value;
+    }
+    pub fn visitUnaryExpr(visitor: *ExprVisitor, expr: UnaryExpr) ?Value {
+        const self = @fieldParentPtr(Self, "exprVisitor", visitor);
+        const right = self.evaluate(expr.right) orelse return null;
+        if (!self.checkNumberOperand(expr.operator, right)) return null;
+
+        _ = switch (expr.operator.token_type) {
+            // .BANG => return Value{.Bool = !self.isTruthy(right)},
+            .BANG => return self.toBoolValue(!self.isTruthy(right)),
+            .MINUS => return Value{ .Number = -(self.number(right) orelse return null) },
+            // .MINUS => return Literal{ .NUMBER = -(self.number(right) orelse return null) },
+            else => null,
+        };
+
+        return null;
+    }
+    pub fn visitVariableExpr(visitor: *ExprVisitor, expr: VariableExpr) ?Value {
+        const self = @fieldParentPtr(Self, "exprVisitor", visitor);
+        return self.environment.get(expr.name) catch |err| null;
+    }
+    pub fn checkNumberOperand(self: *Self, operator: Token, operand: Value) bool {
+        _ = self.number(operand) orelse {
+            _ = self.save_error(operator, "Operand must be a number.");
+            return false;
+        };
+        return true;
+    }
+    pub fn checkNumberOperands(self: *Self, operator: Token, left: Value, right: Value) bool {
+        _ = self.number(left) orelse {
+            _ = self.save_error(operator, "Operands must be numbers.");
+            return false;
+        };
+        _ = self.number(right) orelse {
+            _ = self.save_error(operator, "Operands must be numbers.");
+            return false;
+        };
+        return true;
+    }
+    fn isEqual(self: *Self, left: Value, right: Value) bool {
+        if (self.number(left)) |leftN| {
+            const rightN = self.number(right) orelse return false;
+            return leftN == rightN;
+        } else if (self.string(left)) |leftS| {
+            const rightS = self.string(right) orelse return false;
+            return std.mem.eql(u8, leftS, rightS);
+        } else if (self.boolean(left)) |leftB| {
+            const rightB = self.boolean(right) orelse return false;
+            return leftB == rightB;
+        } else if (Value.Nil == left and Value.Nil == right) {
+            return true;
+        }
+        return false;
+    }
+    fn toBoolValue(self: *Self, value: bool) Value {
+        return Value{ .Bool = value };
+    }
+    fn boolean(self: *Self, value: Value) ?bool {
+        switch (value) {
+            .Bool => |v| return v,
+            else => return null,
+        }
+    }
+    fn number(self: *Self, value: Value) ?f64 {
+        switch (value) {
+            .Number => |n| return n,
+            else => return null,
+        }
+    }
+    fn string(self: *Self, value: Value) ?[]const u8 {
+        const bytes = switch (value) {
+            .String => |bytes| bytes,
+            else => return null,
+        };
+
+        var buf = self.allocator.alloc(u8, bytes.len) catch |err| {
+            std.debug.print("Failed to alloc string, returning null. {e}", .{err});
+            return null;
+        };
+        const replacements = std.mem.replace(u8, bytes, "\\n", "\n", buf);
+        if (replacements > 0) {
+            self.strings.append(buf) catch |err| {
+                std.debug.print("Failed to store string, returning null. {e}", .{err});
+                return null;
+            };
+            return buf[0 .. bytes.len - replacements];
+        } else {
+            self.allocator.free(buf);
+            return bytes;
+        }
+    }
+    fn isTruthy(self: *Self, value: Value) bool {
+        return switch (value) {
+            .Bool => |b| b,
+            .String, .Number => true,
+            else => false,
+        };
+    }
+    fn create_joined_string(self: *Self, left: []const u8, right: []const u8) ?[]u8 {
+        var joined = self.allocator.alloc(u8, left.len + right.len) catch |err| {
+            std.debug.print("Failed to alloc string, returning null. {e}", .{err});
+            return null;
+        };
+        _ = std.fmt.bufPrint(joined, "{s}{s}", .{ left, right }) catch |err| {
+            std.debug.print("Failed to format string, returning null. {e}", .{err});
+            return null;
+        };
+        _ = self.strings.append(joined) catch |err| {
+            std.debug.print("Failed to store string, returning null. {e}", .{err});
+            return null;
+        };
+        return joined;
+    }
+    fn save_error(self: *Self, token: Token, message: []const u8) ?Value {
+        self.error_token = token;
+        self.error_message = message;
+        return null;
+    }
+};
+
+test "interpreter" {
+    const test_allocator = std.testing.allocator;
+    var tokens = ArrayList(Token).init(test_allocator);
+    try tokens.append(Token.init(.LEFT_PAREN, "(", .LEFT_PAREN, 1));
+    try tokens.append(Token.init(.NUMBER, "2.0", Literal{ .NUMBER = 2.0 }, 1));
+    try tokens.append(Token.init(.GREATER, ">", .GREATER, 1));
+    try tokens.append(Token.init(.NUMBER, "3.0", Literal{ .NUMBER = 3.0 }, 1));
+    try tokens.append(Token.init(.EQUAL_EQUAL, "==", .EQUAL_EQUAL, 1));
+    try tokens.append(Token.init(.NUMBER, "4.0", Literal{ .NUMBER = 4.0 }, 1));
+    try tokens.append(Token.init(.RIGHT_PAREN, ")", .RIGHT_PAREN, 1));
+    try tokens.append(Token.init(.SEMICOLON, ";", .SEMICOLON, 1));
+    defer tokens.deinit();
+    var parser = Parser.init(test_allocator, tokens);
+    defer parser.deinit();
+
+    // Should succeed.
+    const exp = (try parser.parse()) orelse return;
+    // var interpreter = Interpreter.init(test_allocator);
+    // defer interpreter.deinit();
+    // try interpreter.interpret(exp);
+}
+
+// ======
+// Parser
+// ======
 
 test "Parser recursive-descent missing semicolon after statement" {
     var test_allocator = std.testing.allocator;
@@ -39,7 +295,7 @@ test "Parser recursive-descent missing semicolon after statement" {
     var parser = Parser.init(test_allocator, tokens);
     defer parser.deinit();
     const statements = try parser.parse();
-    try std.testing.expect(null == statements);
+    try std.testing.expect(true == hadError);
 }
 
 test "Parser recursive-descent" {
@@ -64,12 +320,9 @@ test "Parser recursive-descent" {
     try interpreter.interpret(statements);
 }
 
-// missing_literal is for Literal Tokens
-pub const ParseError = error{ invalid_syntax, alloc_err, missing_literal };
-
 pub const Parser = struct {
     const Self = @This();
-    const Err = ParseError;
+    const Err = LoxError;
 
     allocator: *Allocator,
     tokens: ArrayList(Token),
@@ -95,14 +348,12 @@ pub const Parser = struct {
 
     pub fn parse(self: *Parser) !?ArrayList(*Stmt) {
         while (!self.isAtEnd()) {
-            if (self.statement()) |stmt| {
+            const dec = self.declaration() catch |err| {
+                continue;
+            };
+            if (dec) |stmt| {
                 self.statements.append(stmt) catch {
                     return Self.Err.alloc_err;
-                };
-            } else |err| {
-                return switch (err) {
-                    Self.Err.invalid_syntax => null,
-                    else => err,
                 };
             }
         }
@@ -111,6 +362,19 @@ pub const Parser = struct {
 
     fn expression(self: *Parser) !*Expr {
         return try self.equality();
+    }
+
+    fn declaration(self: *Parser) !?*Stmt {
+        if (self.match(.VAR)) {
+            return self.varDeclaration() catch |err| {
+                try self.synchronize();
+                return null;
+            };
+        }
+        return self.statement() catch |err| {
+            try self.synchronize();
+            return null;
+        };
     }
 
     fn statement(self: *Parser) !*Stmt {
@@ -124,6 +388,23 @@ pub const Parser = struct {
             return self.rewindErr(expr, err);
         };
         return &(try PrintStmt.init(self.allocator, expr)).stmt;
+    }
+
+    fn varDeclaration(self: *Parser) !*Stmt {
+        var name = try self.consume(.IDENTIFIER, "Expect variable name.");
+        var initializer: ?*Expr = null;
+        if (self.match(.EQUAL)) {
+            initializer = try self.expression();
+        }
+        _ = self.consume(.SEMICOLON, "Expect ';' after variable declaration.") catch |err| {
+            if (initializer) |i| {
+                return self.rewindErr(i, err);
+            } else {
+                return err;
+            }
+        };
+        const stmt = try VarStmt.init(self.allocator, name, initializer);
+        return &stmt.stmt;
     }
 
     fn expressionStatement(self: *Parser) !*Stmt {
@@ -250,6 +531,13 @@ pub const Parser = struct {
             }
         }
 
+        if (self.match(.IDENTIFIER)) {
+            const exp = VariableExpr.init(self.allocator, try self.previous()) catch |err| {
+                return Self.Err.alloc_err;
+            };
+            return &exp.expr;
+        }
+
         if (self.match(.LEFT_PAREN)) {
             const exp = try self.expression();
             _ = self.consume(.RIGHT_PAREN, "Expect ')' after expression.") catch |err| {
@@ -271,7 +559,7 @@ pub const Parser = struct {
     // all to deinit rather than use visitor.
     fn rewindErr(self: *Parser, expr: *Expr, err: Self.Err) Self.Err {
         var deiniter = DeinitVisitor.init(self.allocator);
-        _ = expr.accept(&deiniter.visitor);
+        _ = expr.accept(&deiniter.exprVisitor);
         return err;
     }
 
@@ -371,15 +659,17 @@ pub const Parser = struct {
 /// Deinitializes an ast.
 pub const DeinitVisitor = struct {
     const Self = @This();
-    visitor: ExprVisitor = ExprVisitor{
+    exprVisitor: ExprVisitor = ExprVisitor{
         .visitBinaryExprFn = visitBinaryExpr,
         .visitGroupingExprFn = visitGroupingExpr,
         .visitLiteralExprFn = visitLiteralExpr,
         .visitUnaryExprFn = visitUnaryExpr,
+        .visitVariableExprFn = visitVariableExpr,
     },
     stmtVisitor: StmtVisitor = StmtVisitor{
         .visitExpressionStmtFn = visitExpressionStmt,
         .visitPrintStmtFn = visitPrintStmt,
+        .visitVarStmtFn = visitVarStmt,
     },
     allocator: *Allocator,
 
@@ -387,39 +677,51 @@ pub const DeinitVisitor = struct {
         return .{ .allocator = allocator };
     }
     pub fn deinitExpr(self: *Self, expr: *Expr) void {
-        _ = expr.accept(&self.visitor);
+        _ = expr.accept(&self.exprVisitor);
     }
     pub fn visitExpressionStmt(visitor: *StmtVisitor, stmt: ExpressionStmt) !void {
         const self = @fieldParentPtr(Self, "stmtVisitor", visitor);
-        _ = stmt.expression.accept(&self.visitor);
+        _ = stmt.expression.accept(&self.exprVisitor);
         self.allocator.destroy(&stmt);
     }
     pub fn visitPrintStmt(visitor: *StmtVisitor, stmt: PrintStmt) !void {
         const self = @fieldParentPtr(Self, "stmtVisitor", visitor);
-        _ = stmt.expression.accept(&self.visitor);
+        _ = stmt.expression.accept(&self.exprVisitor);
+        self.allocator.destroy(&stmt);
+    }
+    pub fn visitVarStmt(visitor: *StmtVisitor, stmt: VarStmt) !void {
+        const self = @fieldParentPtr(Self, "stmtVisitor", visitor);
+        if (stmt.initializer) |ini| {
+            _ = ini.accept(&self.exprVisitor);
+        }
         self.allocator.destroy(&stmt);
     }
     pub fn visitBinaryExpr(visitor: *ExprVisitor, expr: BinaryExpr) ?Value {
-        const self = @fieldParentPtr(Self, "visitor", visitor);
+        const self = @fieldParentPtr(Self, "exprVisitor", visitor);
         _ = expr.left.accept(visitor);
         _ = expr.right.accept(visitor);
         _ = self.allocator.destroy(&expr);
         return null;
     }
     pub fn visitGroupingExpr(visitor: *ExprVisitor, expr: GroupingExpr) ?Value {
-        const self = @fieldParentPtr(Self, "visitor", visitor);
+        const self = @fieldParentPtr(Self, "exprVisitor", visitor);
         _ = expr.expression.accept(visitor);
         _ = self.allocator.destroy(&expr);
         return null;
     }
     pub fn visitLiteralExpr(visitor: *ExprVisitor, expr: LiteralExpr) ?Value {
-        const self = @fieldParentPtr(Self, "visitor", visitor);
+        const self = @fieldParentPtr(Self, "exprVisitor", visitor);
         self.allocator.destroy(&expr);
         return null;
     }
     pub fn visitUnaryExpr(visitor: *ExprVisitor, expr: UnaryExpr) ?Value {
-        const self = @fieldParentPtr(Self, "visitor", visitor);
+        const self = @fieldParentPtr(Self, "exprVisitor", visitor);
         _ = expr.right.accept(visitor);
+        _ = self.allocator.destroy(&expr);
+        return null;
+    }
+    pub fn visitVariableExpr(visitor: *ExprVisitor, expr: VariableExpr) ?Value {
+        const self = @fieldParentPtr(Self, "exprVisitor", visitor);
         _ = self.allocator.destroy(&expr);
         return null;
     }
@@ -432,6 +734,7 @@ pub const AstPrinter = struct {
         .visitGroupingExprFn = visitGroupingExpr,
         .visitLiteralExprFn = visitLiteralExpr,
         .visitUnaryExprFn = visitUnaryExpr,
+        .visitVariableExprFn = visitVariableExpr,
     },
 
     pub fn print(self: *Self, expr: *Expr) void {
@@ -465,6 +768,11 @@ pub const AstPrinter = struct {
         std.debug.print("({s} ", .{expr.operator.lexeme});
         _ = expr.right.accept(visitor);
         std.debug.print(")", .{});
+        return null;
+    }
+    pub fn visitVariableExpr(visitor: *ExprVisitor, expr: VariableExpr) ?Value {
+        const self = @fieldParentPtr(Self, "visitor", visitor);
+        std.debug.print("(decvar {s})", .{expr.name.lexeme});
         return null;
     }
 };
@@ -510,216 +818,6 @@ test "deinit" {
     try interpreter.interpret(exp);
 }
 
-pub const InterpretError = error{ failed_eval, print_error };
-
-pub const Interpreter = struct {
-    const Self = @This();
-    exprVisitor: ExprVisitor = ExprVisitor{
-        .visitBinaryExprFn = visitBinaryExpr,
-        .visitGroupingExprFn = visitGroupingExpr,
-        .visitLiteralExprFn = visitLiteralExpr,
-        .visitUnaryExprFn = visitUnaryExpr,
-    },
-    stmtVisitor: StmtVisitor = StmtVisitor{
-        .visitPrintStmtFn = visitPrintStmt,
-        .visitExpressionStmtFn = visitExpressionStmt,
-    },
-    allocator: *Allocator,
-    strings: ArrayList([]const u8),
-    error_token: ?Token = null,
-    error_message: ?[]const u8 = null,
-
-    pub fn init(allocator: *Allocator) Self {
-        return .{ .allocator = allocator, .strings = ArrayList([]const u8).init(allocator) };
-    }
-    pub fn deinit(self: *Self) void {
-        for (self.strings.items) |s| {
-            self.allocator.free(s);
-        }
-        self.strings.deinit();
-    }
-    pub fn interpret(self: *Self, statements: ArrayList(*Stmt)) !void {
-        for (statements.items) |statement| {
-            try self.execute(statement);
-        }
-    }
-    fn execute(self: *Self, stmt: *Stmt) !void {
-        try stmt.accept(&self.stmtVisitor);
-    }
-    fn evaluate(self: *Self, expr: *Expr) ?Value {
-        return expr.accept(&self.exprVisitor);
-    }
-    pub fn visitExpressionStmt(visitor: *StmtVisitor, stmt: ExpressionStmt) !void {
-        const self = @fieldParentPtr(Self, "stmtVisitor", visitor);
-        _ = self.evaluate(stmt.expression) orelse return InterpretError.failed_eval;
-    }
-    pub fn visitPrintStmt(visitor: *StmtVisitor, stmt: PrintStmt) !void {
-        const self = @fieldParentPtr(Self, "stmtVisitor", visitor);
-        const value = self.evaluate(stmt.expression) orelse return InterpretError.failed_eval;
-        stdout.print("{?}\n", .{value}) catch |err| return InterpretError.print_error;
-    }
-    pub fn visitBinaryExpr(visitor: *ExprVisitor, expr: BinaryExpr) ?Value {
-        const self = @fieldParentPtr(Self, "exprVisitor", visitor);
-        const left = self.evaluate(expr.left) orelse return null;
-        const right = self.evaluate(expr.right) orelse return null;
-
-        switch (expr.operator.token_type) {
-            .EQUAL_EQUAL => return self.toBoolValue(self.isEqual(left, right)),
-            .BANG_EQUAL => return self.toBoolValue(!self.isEqual(left, right)),
-            .MINUS, .SLASH, .STAR, .GREATER, .GREATER_EQUAL, .LESS, .LESS_EQUAL => {
-                if (!self.checkNumberOperands(expr.operator, left, right)) return null;
-                const leftN = self.number(left) orelse return null;
-                const rightN = self.number(right) orelse return null;
-
-                switch (expr.operator.token_type) {
-                    .GREATER => return self.toBoolValue(leftN > rightN),
-                    .GREATER_EQUAL => return self.toBoolValue(leftN >= rightN),
-                    .LESS => return self.toBoolValue(leftN < rightN),
-                    .LESS_EQUAL => return self.toBoolValue(leftN <= rightN),
-                    .MINUS => return Value{ .Number = leftN - rightN },
-                    .SLASH => return Value{ .Number = leftN / rightN },
-                    .STAR => return Value{ .Number = leftN * rightN },
-                    else => return null,
-                }
-            },
-            .PLUS => if (self.number(left)) |leftN| {
-                const rightN = self.number(right) orelse return self.save_error(expr.operator, "Operands must be two numbers or two strings.");
-                return Value{ .Number = leftN + rightN };
-            } else if (self.string(left)) |leftS| {
-                const rightS = self.string(right) orelse return self.save_error(expr.operator, "Operands must be two numbers or two strings.");
-                return Value{ .String = self.create_joined_string(leftS, rightS) orelse return null };
-            },
-            else => return null,
-        }
-        return null;
-    }
-    pub fn visitGroupingExpr(visitor: *ExprVisitor, expr: GroupingExpr) ?Value {
-        const self = @fieldParentPtr(Self, "exprVisitor", visitor);
-        return self.evaluate(expr.expression);
-    }
-    pub fn visitLiteralExpr(visitor: *ExprVisitor, expr: LiteralExpr) ?Value {
-        return expr.value;
-    }
-    pub fn visitUnaryExpr(visitor: *ExprVisitor, expr: UnaryExpr) ?Value {
-        const self = @fieldParentPtr(Self, "exprVisitor", visitor);
-        const right = self.evaluate(expr.right) orelse return null;
-        if (!self.checkNumberOperand(expr.operator, right)) return null;
-
-        _ = switch (expr.operator.token_type) {
-            // .BANG => return Value{.Bool = !self.isTruthy(right)},
-            .BANG => return self.toBoolValue(!self.isTruthy(right)),
-            .MINUS => return Value{ .Number = -(self.number(right) orelse return null) },
-            // .MINUS => return Literal{ .NUMBER = -(self.number(right) orelse return null) },
-            else => null,
-        };
-
-        return null;
-    }
-    pub fn checkNumberOperand(self: *Self, operator: Token, operand: Value) bool {
-        _ = self.number(operand) orelse {
-            _ = self.save_error(operator, "Operand must be a number.");
-            return false;
-        };
-        return true;
-    }
-    pub fn checkNumberOperands(self: *Self, operator: Token, left: Value, right: Value) bool {
-        _ = self.number(left) orelse {
-            _ = self.save_error(operator, "Operands must be numbers.");
-            return false;
-        };
-        _ = self.number(right) orelse {
-            _ = self.save_error(operator, "Operands must be numbers.");
-            return false;
-        };
-        return true;
-    }
-    fn isEqual(self: *Self, left: Value, right: Value) bool {
-        if (self.number(left)) |leftN| {
-            const rightN = self.number(right) orelse return false;
-            return leftN == rightN;
-        } else if (self.string(left)) |leftS| {
-            const rightS = self.string(right) orelse return false;
-            return std.mem.eql(u8, leftS, rightS);
-        } else if (self.boolean(left)) |leftB| {
-            const rightB = self.boolean(right) orelse return false;
-            return leftB == rightB;
-        } else if (Value.Nil == left and Value.Nil == right) {
-            return true;
-        }
-        return false;
-    }
-    fn toBoolValue(self: *Self, value: bool) Value {
-        return Value{ .Bool = value };
-    }
-    fn boolean(self: *Self, value: Value) ?bool {
-        switch (value) {
-            .Bool => |v| return v,
-            else => return null,
-        }
-    }
-    fn number(self: *Self, value: Value) ?f64 {
-        switch (value) {
-            .Number => |n| return n,
-            else => return null,
-        }
-    }
-    fn string(self: *Self, value: Value) ?[]const u8 {
-        switch (value) {
-            .String => |s| return s,
-            else => return null,
-        }
-    }
-    fn isTruthy(self: *Self, value: Value) bool {
-        return switch (value) {
-            .Bool => |b| b,
-            .String, .Number => true,
-            else => false,
-        };
-    }
-    fn create_joined_string(self: *Self, left: []const u8, right: []const u8) ?[]u8 {
-        var joined = self.allocator.alloc(u8, left.len + right.len) catch |err| {
-            std.debug.print("Failed to alloc string, returning null. {e}", .{err});
-            return null;
-        };
-        _ = std.fmt.bufPrint(joined, "{s}{s}", .{ left, right }) catch |err| {
-            std.debug.print("Failed to format string, returning null. {e}", .{err});
-            return null;
-        };
-        _ = self.strings.append(joined) catch |err| {
-            std.debug.print("Failed to store string, returning null. {e}", .{err});
-            return null;
-        };
-        return joined;
-    }
-    fn save_error(self: *Self, token: Token, message: []const u8) ?Value {
-        self.error_token = token;
-        self.error_message = message;
-        return null;
-    }
-};
-
-test "interpreter" {
-    const test_allocator = std.testing.allocator;
-    var tokens = ArrayList(Token).init(test_allocator);
-    try tokens.append(Token.init(.LEFT_PAREN, "(", .LEFT_PAREN, 1));
-    try tokens.append(Token.init(.NUMBER, "2.0", Literal{ .NUMBER = 2.0 }, 1));
-    try tokens.append(Token.init(.GREATER, ">", .GREATER, 1));
-    try tokens.append(Token.init(.NUMBER, "3.0", Literal{ .NUMBER = 3.0 }, 1));
-    try tokens.append(Token.init(.EQUAL_EQUAL, "==", .EQUAL_EQUAL, 1));
-    try tokens.append(Token.init(.NUMBER, "4.0", Literal{ .NUMBER = 4.0 }, 1));
-    try tokens.append(Token.init(.RIGHT_PAREN, ")", .RIGHT_PAREN, 1));
-    try tokens.append(Token.init(.SEMICOLON, ";", .SEMICOLON, 1));
-    defer tokens.deinit();
-    var parser = Parser.init(test_allocator, tokens);
-    defer parser.deinit();
-
-    // Should succeed.
-    const exp = (try parser.parse()) orelse return;
-    // var interpreter = Interpreter.init(test_allocator);
-    // defer interpreter.deinit();
-    // try interpreter.interpret(exp);
-}
-
 pub const ValueType = enum {
     Identifier,
     String,
@@ -747,7 +845,7 @@ pub const Value = union(ValueType) {
 
     pub fn format(value: Value, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
         switch (value) {
-            .String => |s| try writer.print("\"{s}\"", .{s}),
+            .String => |s| try writer.print("{s}", .{s}),
             .Number => |e| {
                 var buf: [32]u8 = undefined;
                 const slice = buf[0..];
@@ -946,6 +1044,7 @@ const Scanner = struct {
     fn string(self: *Scanner) !void {
         while (self.peek() != '"' and !self.isAtEnd()) {
             if (self.peek() == '\n') self.line += 1;
+            // if (self.peek() == '\\' and self.peekNext() == 'n') self.line += 1;
             _ = self.advance();
         }
 

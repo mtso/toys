@@ -3,8 +3,8 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
-const Token = @import("main.zig").Token;
 const Value = @import("main.zig").Value;
+pub const Token = @import("main.zig").Token; // concession for single import name
 
 pub const Expr = struct {
     const Self = @This();
@@ -20,6 +20,7 @@ pub const Visitor = struct {
     visitGroupingExprFn: fn (self: *Self, expr: GroupingExpr) ?Value,
     visitLiteralExprFn: fn (self: *Self, expr: LiteralExpr) ?Value,
     visitUnaryExprFn: fn (self: *Self, expr: UnaryExpr) ?Value,
+    visitVariableExprFn: fn (self: *Self, expr: VariableExpr) ?Value,
 
     pub fn visitBinaryExpr(self: *Self, expr: BinaryExpr) ?Value {
         return self.visitBinaryExprFn(self, expr);
@@ -32,6 +33,9 @@ pub const Visitor = struct {
     }
     pub fn visitUnaryExpr(self: *Self, expr: UnaryExpr) ?Value {
         return self.visitUnaryExprFn(self, expr);
+    }
+    pub fn visitVariableExpr(self: *Self, expr: VariableExpr) ?Value {
+        return self.visitVariableExprFn(self, expr);
     }
 };
 
@@ -103,5 +107,22 @@ pub const UnaryExpr = struct {
     pub fn accept(expr: *const Expr, visitor: *Visitor) ?Value {
         const self = @fieldParentPtr(Self, "expr", expr);
         return visitor.visitUnaryExpr(self.*);
+    }
+};
+
+pub const VariableExpr = struct {
+    const Self = @This();
+    expr: Expr = Expr{ .acceptFn = accept },
+
+    name: Token,
+
+    pub fn init(allocator: *Allocator, name: Token) !*Self {
+        const self = try allocator.create(Self);
+        self.* = .{ .name = name };
+        return self;
+    }
+    pub fn accept(expr: *const Expr, visitor: *Visitor) ?Value {
+        const self = @fieldParentPtr(Self, "expr", expr);
+        return visitor.visitVariableExpr(self.*);
     }
 };
