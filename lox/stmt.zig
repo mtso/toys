@@ -8,9 +8,15 @@ const Token = @import("expr.zig").Token;
 
 pub const Stmt = struct {
     const Self = @This();
+    name: []const u8,
     acceptFn: fn (self: *const Self, visitor: *Visitor) anyerror!void,
+    getTokenFn: fn (self: *const Self) ?Token,
+
     pub fn accept(self: *const Self, visitor: *Visitor) anyerror!void {
         return self.acceptFn(self, visitor);
+    }
+    pub fn getToken(self: *const Self) ?Token {
+        return self.getTokenFn(self);
     }
 };
 
@@ -33,7 +39,7 @@ pub const Visitor = struct {
 
 pub const ExpressionStmt = struct {
     const Self = @This();
-    stmt: Stmt = Stmt{ .acceptFn = accept },
+    stmt: Stmt = Stmt{ .acceptFn = accept, .getTokenFn = getToken, .name = "ExpressionStmt" },
 
     expression: *Expr,
 
@@ -46,11 +52,14 @@ pub const ExpressionStmt = struct {
         const self = @fieldParentPtr(Self, "stmt", stmt);
         return visitor.visitExpressionStmt(self.*);
     }
+    pub fn getToken(stmt: *const Stmt) ?Token {
+        return null;
+    }
 };
 
 pub const PrintStmt = struct {
     const Self = @This();
-    stmt: Stmt = Stmt{ .acceptFn = accept },
+    stmt: Stmt = Stmt{ .acceptFn = accept, .getTokenFn = getToken, .name = "PrintStmt" },
 
     expression: *Expr,
 
@@ -63,11 +72,14 @@ pub const PrintStmt = struct {
         const self = @fieldParentPtr(Self, "stmt", stmt);
         return visitor.visitPrintStmt(self.*);
     }
+    pub fn getToken(stmt: *const Stmt) ?Token {
+        return null;
+    }
 };
 
 pub const VarStmt = struct {
     const Self = @This();
-    stmt: Stmt = Stmt{ .acceptFn = accept },
+    stmt: Stmt = Stmt{ .acceptFn = accept, .getTokenFn = getToken, .name = "VarStmt" },
 
     name: Token,
     initializer: ?*Expr,
@@ -80,5 +92,8 @@ pub const VarStmt = struct {
     pub fn accept(stmt: *const Stmt, visitor: *Visitor) anyerror!void {
         const self = @fieldParentPtr(Self, "stmt", stmt);
         return visitor.visitVarStmt(self.*);
+    }
+    pub fn getToken(stmt: *const Stmt) ?Token {
+        return null;
     }
 };

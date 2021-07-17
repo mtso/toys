@@ -23,6 +23,7 @@ pub fn main() !void {
 
     var exprs = ArrayList([]const u8).init(gpa);
     defer exprs.deinit();
+    try exprs.append("AssignExpr   | name: Token, value: *Expr");
     try exprs.append("BinaryExpr   | left: *Expr, operator: Token, right: *Expr");
     try exprs.append("GroupingExpr | expression: *Expr");
     try exprs.append("LiteralExpr  | value: Value");
@@ -94,21 +95,27 @@ fn defineBase(out: anytype, baseName: []const u8, returnType: []const u8) !void 
     const source =
         \\pub const {s} = struct {c}
         \\    const Self = @This();
+        \\    name: []const u8,
         \\    acceptFn: fn (self: *const Self, visitor: *Visitor) {s},
+        \\    getTokenFn: fn (self: *const Self) ?Token,
+        \\
         \\    pub fn accept(self: *const Self, visitor: *Visitor) {s} {c}
         \\        return self.acceptFn(self, visitor);
+        \\    {c}
+        \\    pub fn getToken(self: *const Self) ?Token {c}
+        \\        return self.getTokenFn(self);
         \\    {c}
         \\{c};
         \\
         \\
     ;
-    try out.print(source, .{ baseName, '{', returnType, returnType, '{', '}', '}' });
+    try out.print(source, .{ baseName, '{', returnType, returnType, '{', '}', '{', '}', '}' });
 }
 
 fn defineType(out: anytype, baseName: []const u8, littleBaseName: []const u8, className: []const u8, fields: []const u8, returnType: []const u8) !void {
     try out.print("pub const {s} = struct {c}\n", .{ className, '{' });
     try out.print("    const Self = @This();\n", .{});
-    try out.print("    {s}: {s} = {s}{c} .acceptFn = accept {c},\n\n", .{ littleBaseName, baseName, baseName, '{', '}' });
+    try out.print("    {s}: {s} = {s}{c} .acceptFn = accept, .getTokenFn = getToken, .name = \"{s}\" {c},\n\n", .{ littleBaseName, baseName, baseName, '{', className, '}' });
 
     // fields
     var f1 = split(fields, ", ");
@@ -133,6 +140,7 @@ fn defineType(out: anytype, baseName: []const u8, littleBaseName: []const u8, cl
         "        const self = try allocator.create(Self);\n",
         "        self.* = .{",
     })[0..]);
+
     var f3 = split(fields, ", ");
     if (f3.next()) |field| {
         var p = split(field, ": ");
@@ -157,10 +165,23 @@ fn defineType(out: anytype, baseName: []const u8, littleBaseName: []const u8, cl
         \\
     ;
     try out.print(acceptFn, .{ littleBaseName, baseName, returnType, '{', littleBaseName, littleBaseName });
-    try out.print("        return visitor.visit{s}(self.*);\n", .{className});
+    try out.print("        return visitor.visit{s}(self.*);\n    {c}\n", .{ className, '}' });
+
+    // getToken fn
+    const getTokenFn =
+        \\    pub fn getToken({s}: *const {s}) ?Token {c}
+        \\
+    ;
+    if (std.mem.eql(u8, className, "AssignExpr")) {
+        try out.print(getTokenFn, .{ littleBaseName, baseName, '{' });
+        try out.print("        const self = @fieldParentPtr(Self, \"{s}\", {s});\n        return self.name;\n    {c}\n", .{ littleBaseName, littleBaseName, '}' });
+    } else {
+        try out.print(getTokenFn, .{ littleBaseName, baseName, '{' });
+        try out.print("        return null;\n    {c}\n", .{'}'});
+    }
 
     try prints(out, ([_][]const u8{
-        "    }\n",
+        // "    }\n",
         "};\n",
         "\n",
     })[0..]);

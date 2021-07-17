@@ -31,4 +31,15 @@ pub const Environment = struct {
         // self.runtimeError(name, "Undefined variable.");
         return LoxError.runtime_error;
     }
+
+    pub fn assign(self: *Self, name: Token, value: Value) !void {
+        if (self.values.contains(name.lexeme)) {
+            try self.values.put(name.lexeme, value);
+            return;
+        }
+
+        // TODO
+        // self.runtimeError(name, "Undefined variable.");
+        return LoxError.runtime_error;
+    }
 };

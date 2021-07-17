@@ -6,9 +6,10 @@ const stdout = std.io.getStdOut().writer();
 
 const Expr = @import("expr.zig").Expr;
 const ExprVisitor = @import("expr.zig").Visitor;
-const LiteralExpr = @import("expr.zig").LiteralExpr;
-const GroupingExpr = @import("expr.zig").GroupingExpr;
+const AssignExpr = @import("expr.zig").AssignExpr;
 const BinaryExpr = @import("expr.zig").BinaryExpr;
+const GroupingExpr = @import("expr.zig").GroupingExpr;
+const LiteralExpr = @import("expr.zig").LiteralExpr;
 const UnaryExpr = @import("expr.zig").UnaryExpr;
 const VariableExpr = @import("expr.zig").VariableExpr;
 
@@ -30,6 +31,7 @@ pub const LoxError = error{ invalid_syntax, alloc_err, missing_literal, runtime_
 pub const Interpreter = struct {
     const Self = @This();
     exprVisitor: ExprVisitor = ExprVisitor{
+        .visitAssignExprFn = visitAssignExpr,
         .visitBinaryExprFn = visitBinaryExpr,
         .visitGroupingExprFn = visitGroupingExpr,
         .visitLiteralExprFn = visitLiteralExpr,
@@ -85,6 +87,17 @@ pub const Interpreter = struct {
             }
         }
         try self.environment.define(stmt.name.lexeme, Value{ .Nil = null });
+    }
+    pub fn visitAssignExpr(visitor: *ExprVisitor, expr: AssignExpr) ?Value {
+        const self = @fieldParentPtr(Self, "exprVisitor", visitor);
+        var value = self.evaluate(expr.value) orelse return null;
+        self.environment.assign(expr.name, value) catch |err| {
+            // put this maybe into env
+            // fixme
+            // self.handleErr(expr.name, "Invalid assignment\n");
+            return null;
+        };
+        return value;
     }
     pub fn visitBinaryExpr(visitor: *ExprVisitor, expr: BinaryExpr) ?Value {
         const self = @fieldParentPtr(Self, "exprVisitor", visitor);
@@ -361,7 +374,7 @@ pub const Parser = struct {
     }
 
     fn expression(self: *Parser) !*Expr {
-        return try self.equality();
+        return try self.assignment();
     }
 
     fn declaration(self: *Parser) !?*Stmt {
@@ -410,9 +423,39 @@ pub const Parser = struct {
     fn expressionStatement(self: *Parser) !*Stmt {
         const expr = try self.expression();
         _ = self.consume(.SEMICOLON, "Expect ';' after value.") catch |err| {
+            std.debug.print("inexprStmt ", .{});
             return self.rewindErr(expr, err);
         };
         return &(try ExpressionStmt.init(self.allocator, expr)).stmt;
+    }
+
+    fn assignment(self: *Parser) LoxError!*Expr {
+        var exp: *Expr = try self.equality();
+        // std.debug.print("inassign0 {?}\n", .{exp});
+        if (self.match(.EQUAL)) {
+            var equals = try self.previous();
+            std.debug.print("inassign {?}\n", .{equals});
+            var value = self.assignment() catch |err| {
+                return self.rewindErr(exp, err);
+            };
+            if (std.mem.eql(u8, exp.name, "VariableExpr")) {
+                var name = try self.previous2();
+                //  exp.getToken();
+                // if (null == name) {
+                //     std.debug.print("{?}\n", .{exp});
+                // }
+                // var name = exp.getToken().?;
+                //  Token.init(.IDENTIFIER, "a", Literal{.IDENTIFIER = "a"}, 5)
+                const expP = AssignExpr.init(self.allocator, name, value) catch |err| {
+                    std.debug.print("whatisthis {any}\n", .{exp});
+                    return self.rewindErr(exp, LoxError.alloc_err);
+                };
+                return &expP.expr;
+            }
+            self.handleError(equals, "Invalid assignment target.");
+            return LoxError.runtime_error;
+        }
+        return exp;
     }
 
     fn equality(self: *Parser) !*Expr {
@@ -532,7 +575,9 @@ pub const Parser = struct {
         }
 
         if (self.match(.IDENTIFIER)) {
-            const exp = VariableExpr.init(self.allocator, try self.previous()) catch |err| {
+            var name = try self.previous();
+            std.debug.print("foundId {?} l={d}\n", .{ name, name.line });
+            const exp = VariableExpr.init(self.allocator, name) catch |err| {
                 return Self.Err.alloc_err;
             };
             return &exp.expr;
@@ -639,6 +684,11 @@ pub const Parser = struct {
         return self.tokens.items[self.current - 1];
     }
 
+    fn previous2(self: *Parser) Err!Token {
+        if (self.current <= 1 or self.tokens.items.len < 2) return Self.Err.invalid_syntax;
+        return self.tokens.items[self.current - 2];
+    }
+
     fn isAtEnd(self: *Parser) bool {
         if (self.peek()) |token| {
             return token.token_type == .EOF;
@@ -660,6 +710,7 @@ pub const Parser = struct {
 pub const DeinitVisitor = struct {
     const Self = @This();
     exprVisitor: ExprVisitor = ExprVisitor{
+        .visitAssignExprFn = visitAssignExpr,
         .visitBinaryExprFn = visitBinaryExpr,
         .visitGroupingExprFn = visitGroupingExpr,
         .visitLiteralExprFn = visitLiteralExpr,
@@ -696,6 +747,12 @@ pub const DeinitVisitor = struct {
         }
         self.allocator.destroy(&stmt);
     }
+    pub fn visitAssignExpr(visitor: *ExprVisitor, expr: AssignExpr) ?Value {
+        const self = @fieldParentPtr(Self, "exprVisitor", visitor);
+        _ = expr.value.accept(visitor);
+        _ = self.allocator.destroy(&expr);
+        return null;
+    }
     pub fn visitBinaryExpr(visitor: *ExprVisitor, expr: BinaryExpr) ?Value {
         const self = @fieldParentPtr(Self, "exprVisitor", visitor);
         _ = expr.left.accept(visitor);
@@ -730,6 +787,7 @@ pub const DeinitVisitor = struct {
 pub const AstPrinter = struct {
     const Self = @This();
     visitor: ExprVisitor = ExprVisitor{
+        .visitAssignExprFn = visitAssignExpr,
         .visitBinaryExprFn = visitBinaryExpr,
         .visitGroupingExprFn = visitGroupingExpr,
         .visitLiteralExprFn = visitLiteralExpr,
@@ -741,6 +799,12 @@ pub const AstPrinter = struct {
         _ = expr.accept(&self.visitor);
         std.debug.print("\n", .{});
     }
+    pub fn visitAssignExpr(visitor: *ExprVisitor, expr: AssignExpr) ?Value {
+        std.debug.print("(<assign> {s} ", .{expr.name.lexeme});
+        _ = expr.value.accept(visitor);
+        std.debug.print(")", .{});
+        return null;
+    }
     pub fn visitBinaryExpr(visitor: *ExprVisitor, expr: BinaryExpr) ?Value {
         std.debug.print("({s} ", .{expr.operator.lexeme});
         _ = expr.left.accept(visitor);
@@ -750,7 +814,7 @@ pub const AstPrinter = struct {
         return null;
     }
     pub fn visitGroupingExpr(visitor: *ExprVisitor, expr: GroupingExpr) ?Value {
-        std.debug.print("(group ", .{});
+        std.debug.print("(<group> ", .{});
         _ = expr.expression.accept(visitor);
         std.debug.print(")", .{});
         return null;
@@ -772,7 +836,7 @@ pub const AstPrinter = struct {
     }
     pub fn visitVariableExpr(visitor: *ExprVisitor, expr: VariableExpr) ?Value {
         const self = @fieldParentPtr(Self, "visitor", visitor);
-        std.debug.print("(decvar {s})", .{expr.name.lexeme});
+        std.debug.print("(<variable> {s})", .{expr.name.lexeme});
         return null;
     }
 };
@@ -827,7 +891,7 @@ pub const ValueType = enum {
 };
 
 pub const Value = union(ValueType) {
-    Identifier: []u8,
+    Identifier: []const u8,
     String: []const u8,
     Number: f64,
     Bool: bool,
@@ -893,7 +957,7 @@ const TokenType = enum {
 
 pub const Literal = union(TokenType) {
 // literals
-    IDENTIFIER: []u8, STRING: []const u8, NUMBER: f64, FALSE: bool, TRUE: bool, NIL: ?void,
+    IDENTIFIER: []const u8, STRING: []const u8, NUMBER: f64, FALSE: bool, TRUE: bool, NIL: ?void,
     // non-literals
     LEFT_PAREN, RIGHT_PAREN, LEFT_BRACE, RIGHT_BRACE, COMMA, DOT, MINUS, PLUS, SEMICOLON, SLASH, STAR, BANG, BANG_EQUAL, EQUAL, EQUAL_EQUAL, GREATER, GREATER_EQUAL, LESS, LESS_EQUAL, AND, CLASS, ELSE, FUN, FOR, IF, OR, PRINT, RETURN, SUPER, THIS, VAR, WHILE, EOF
 };

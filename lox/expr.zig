@@ -8,20 +8,30 @@ pub const Token = @import("main.zig").Token; // concession for single import nam
 
 pub const Expr = struct {
     const Self = @This();
+    name: []const u8,
     acceptFn: fn (self: *const Self, visitor: *Visitor) ?Value,
+    getTokenFn: fn (self: *const Self) ?Token,
+
     pub fn accept(self: *const Self, visitor: *Visitor) ?Value {
         return self.acceptFn(self, visitor);
+    }
+    pub fn getToken(self: *const Self) ?Token {
+        return self.getTokenFn(self);
     }
 };
 
 pub const Visitor = struct {
     const Self = @This();
+    visitAssignExprFn: fn (self: *Self, expr: AssignExpr) ?Value,
     visitBinaryExprFn: fn (self: *Self, expr: BinaryExpr) ?Value,
     visitGroupingExprFn: fn (self: *Self, expr: GroupingExpr) ?Value,
     visitLiteralExprFn: fn (self: *Self, expr: LiteralExpr) ?Value,
     visitUnaryExprFn: fn (self: *Self, expr: UnaryExpr) ?Value,
     visitVariableExprFn: fn (self: *Self, expr: VariableExpr) ?Value,
 
+    pub fn visitAssignExpr(self: *Self, expr: AssignExpr) ?Value {
+        return self.visitAssignExprFn(self, expr);
+    }
     pub fn visitBinaryExpr(self: *Self, expr: BinaryExpr) ?Value {
         return self.visitBinaryExprFn(self, expr);
     }
@@ -39,9 +49,31 @@ pub const Visitor = struct {
     }
 };
 
+pub const AssignExpr = struct {
+    const Self = @This();
+    expr: Expr = Expr{ .acceptFn = accept, .getTokenFn = getToken, .name = "AssignExpr" },
+
+    name: Token,
+    value: *Expr,
+
+    pub fn init(allocator: *Allocator, name: Token, value: *Expr) !*Self {
+        const self = try allocator.create(Self);
+        self.* = .{ .name = name, .value = value };
+        return self;
+    }
+    pub fn accept(expr: *const Expr, visitor: *Visitor) ?Value {
+        const self = @fieldParentPtr(Self, "expr", expr);
+        return visitor.visitAssignExpr(self.*);
+    }
+    pub fn getToken(expr: *const Expr) ?Token {
+        const self = @fieldParentPtr(Self, "expr", expr);
+        return self.name;
+    }
+};
+
 pub const BinaryExpr = struct {
     const Self = @This();
-    expr: Expr = Expr{ .acceptFn = accept },
+    expr: Expr = Expr{ .acceptFn = accept, .getTokenFn = getToken, .name = "BinaryExpr" },
 
     left: *Expr,
     operator: Token,
@@ -56,11 +88,14 @@ pub const BinaryExpr = struct {
         const self = @fieldParentPtr(Self, "expr", expr);
         return visitor.visitBinaryExpr(self.*);
     }
+    pub fn getToken(expr: *const Expr) ?Token {
+        return null;
+    }
 };
 
 pub const GroupingExpr = struct {
     const Self = @This();
-    expr: Expr = Expr{ .acceptFn = accept },
+    expr: Expr = Expr{ .acceptFn = accept, .getTokenFn = getToken, .name = "GroupingExpr" },
 
     expression: *Expr,
 
@@ -73,11 +108,14 @@ pub const GroupingExpr = struct {
         const self = @fieldParentPtr(Self, "expr", expr);
         return visitor.visitGroupingExpr(self.*);
     }
+    pub fn getToken(expr: *const Expr) ?Token {
+        return null;
+    }
 };
 
 pub const LiteralExpr = struct {
     const Self = @This();
-    expr: Expr = Expr{ .acceptFn = accept },
+    expr: Expr = Expr{ .acceptFn = accept, .getTokenFn = getToken, .name = "LiteralExpr" },
 
     value: Value,
 
@@ -90,11 +128,14 @@ pub const LiteralExpr = struct {
         const self = @fieldParentPtr(Self, "expr", expr);
         return visitor.visitLiteralExpr(self.*);
     }
+    pub fn getToken(expr: *const Expr) ?Token {
+        return null;
+    }
 };
 
 pub const UnaryExpr = struct {
     const Self = @This();
-    expr: Expr = Expr{ .acceptFn = accept },
+    expr: Expr = Expr{ .acceptFn = accept, .getTokenFn = getToken, .name = "UnaryExpr" },
 
     operator: Token,
     right: *Expr,
@@ -108,11 +149,14 @@ pub const UnaryExpr = struct {
         const self = @fieldParentPtr(Self, "expr", expr);
         return visitor.visitUnaryExpr(self.*);
     }
+    pub fn getToken(expr: *const Expr) ?Token {
+        return null;
+    }
 };
 
 pub const VariableExpr = struct {
     const Self = @This();
-    expr: Expr = Expr{ .acceptFn = accept },
+    expr: Expr = Expr{ .acceptFn = accept, .getTokenFn = getToken, .name = "VariableExpr" },
 
     name: Token,
 
@@ -124,5 +168,8 @@ pub const VariableExpr = struct {
     pub fn accept(expr: *const Expr, visitor: *Visitor) ?Value {
         const self = @fieldParentPtr(Self, "expr", expr);
         return visitor.visitVariableExpr(self.*);
+    }
+    pub fn getToken(expr: *const Expr) ?Token {
+        return null;
     }
 };
