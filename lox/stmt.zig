@@ -7,21 +7,21 @@ const Expr = @import("expr.zig").Expr;
 
 pub const Stmt = struct {
     const Self = @This();
-    acceptFn: fn (self: *const Self, visitor: *Visitor) void,
-    pub fn accept(self: *const Self, visitor: *Visitor) void {
+    acceptFn: fn (self: *const Self, visitor: *Visitor) anyerror!void,
+    pub fn accept(self: *const Self, visitor: *Visitor) anyerror!void {
         return self.acceptFn(self, visitor);
     }
 };
 
 pub const Visitor = struct {
     const Self = @This();
-    visitExpressionStmtFn: fn (self: *Self, stmt: ExpressionStmt) void,
-    visitPrintStmtFn: fn (self: *Self, stmt: PrintStmt) void,
+    visitExpressionStmtFn: fn (self: *Self, stmt: ExpressionStmt) anyerror!void,
+    visitPrintStmtFn: fn (self: *Self, stmt: PrintStmt) anyerror!void,
 
-    pub fn visitExpressionStmt(self: *Self, stmt: ExpressionStmt) void {
+    pub fn visitExpressionStmt(self: *Self, stmt: ExpressionStmt) anyerror!void {
         return self.visitExpressionStmtFn(self, stmt);
     }
-    pub fn visitPrintStmt(self: *Self, stmt: PrintStmt) void {
+    pub fn visitPrintStmt(self: *Self, stmt: PrintStmt) anyerror!void {
         return self.visitPrintStmtFn(self, stmt);
     }
 };
@@ -37,7 +37,7 @@ pub const ExpressionStmt = struct {
         self.* = .{ .expression = expression };
         return self;
     }
-    pub fn accept(stmt: *const Stmt, visitor: *Visitor) void {
+    pub fn accept(stmt: *const Stmt, visitor: *Visitor) anyerror!void {
         const self = @fieldParentPtr(Self, "stmt", stmt);
         return visitor.visitExpressionStmt(self.*);
     }
@@ -54,7 +54,7 @@ pub const PrintStmt = struct {
         self.* = .{ .expression = expression };
         return self;
     }
-    pub fn accept(stmt: *const Stmt, visitor: *Visitor) void {
+    pub fn accept(stmt: *const Stmt, visitor: *Visitor) anyerror!void {
         const self = @fieldParentPtr(Self, "stmt", stmt);
         return visitor.visitPrintStmt(self.*);
     }

@@ -2,8 +2,8 @@ const std = @import("std");
 const mem = std.mem;
 const split = mem.split;
 const trim = mem.trim;
-const Writer = std.io.Writer;
 const ArrayList = std.ArrayList;
+const stdout = std.io.getStdOut().writer();
 
 // Usage:
 // Define the import filepaths (main.zig/expr.zig), then run:
@@ -19,7 +19,7 @@ pub fn main() !void {
     defer exprs.deinit();
     try exprs.append("BinaryExpr   | left: *Expr, operator: Token, right: *Expr");
     try exprs.append("GroupingExpr | expression: *Expr");
-    try exprs.append("LiteralExpr  | value: Literal");
+    try exprs.append("LiteralExpr  | value: Value");
     try exprs.append("UnaryExpr    | operator: Token, right: *Expr");
 
     var stmts = ArrayList([]const u8).init(gpa);
@@ -32,8 +32,10 @@ pub fn main() !void {
     const stmtFile = try std.fs.cwd().createFile("stmt.zig", .{});
     defer stmtFile.close();
 
-    try defineExpr(exprFile.writer(), "main.zig", "Expr", "expr", exprs, "?Literal");
-    try defineStmt(stmtFile.writer(), "expr.zig", "Stmt", "stmt", stmts, "void");
+    try defineExpr(exprFile.writer(), "main.zig", "Expr", "expr", exprs, "?Value");
+    try stdout.print("Generated expr.zig\n", .{});
+    try defineStmt(stmtFile.writer(), "expr.zig", "Stmt", "stmt", stmts, "anyerror!void");
+    try stdout.print("Generated stmt.zig\n", .{});
 }
 
 fn defineStmt(out: anytype, importName: []const u8, baseName: []const u8, littleBaseName: []const u8, types: ArrayList([]const u8), returnType: []const u8) !void {
@@ -68,7 +70,7 @@ fn defineExpr(out: anytype, importName: []const u8, baseName: []const u8, little
         \\const Allocator = std.mem.Allocator;
         \\const ArrayList = std.ArrayList;
         \\const Token = @import("{s}").Token;
-        \\const Literal = @import("{s}").Literal;
+        \\const Value = @import("{s}").Value;
         \\
         \\
     ;

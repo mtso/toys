@@ -4,33 +4,33 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 const Token = @import("main.zig").Token;
-const Literal = @import("main.zig").Literal;
+const Value = @import("main.zig").Value;
 
 pub const Expr = struct {
     const Self = @This();
-    acceptFn: fn (self: *const Self, visitor: *Visitor) ?Literal,
-    pub fn accept(self: *const Self, visitor: *Visitor) ?Literal {
+    acceptFn: fn (self: *const Self, visitor: *Visitor) ?Value,
+    pub fn accept(self: *const Self, visitor: *Visitor) ?Value {
         return self.acceptFn(self, visitor);
     }
 };
 
 pub const Visitor = struct {
     const Self = @This();
-    visitBinaryExprFn: fn (self: *Self, expr: BinaryExpr) ?Literal,
-    visitGroupingExprFn: fn (self: *Self, expr: GroupingExpr) ?Literal,
-    visitLiteralExprFn: fn (self: *Self, expr: LiteralExpr) ?Literal,
-    visitUnaryExprFn: fn (self: *Self, expr: UnaryExpr) ?Literal,
+    visitBinaryExprFn: fn (self: *Self, expr: BinaryExpr) ?Value,
+    visitGroupingExprFn: fn (self: *Self, expr: GroupingExpr) ?Value,
+    visitLiteralExprFn: fn (self: *Self, expr: LiteralExpr) ?Value,
+    visitUnaryExprFn: fn (self: *Self, expr: UnaryExpr) ?Value,
 
-    pub fn visitBinaryExpr(self: *Self, expr: BinaryExpr) ?Literal {
+    pub fn visitBinaryExpr(self: *Self, expr: BinaryExpr) ?Value {
         return self.visitBinaryExprFn(self, expr);
     }
-    pub fn visitGroupingExpr(self: *Self, expr: GroupingExpr) ?Literal {
+    pub fn visitGroupingExpr(self: *Self, expr: GroupingExpr) ?Value {
         return self.visitGroupingExprFn(self, expr);
     }
-    pub fn visitLiteralExpr(self: *Self, expr: LiteralExpr) ?Literal {
+    pub fn visitLiteralExpr(self: *Self, expr: LiteralExpr) ?Value {
         return self.visitLiteralExprFn(self, expr);
     }
-    pub fn visitUnaryExpr(self: *Self, expr: UnaryExpr) ?Literal {
+    pub fn visitUnaryExpr(self: *Self, expr: UnaryExpr) ?Value {
         return self.visitUnaryExprFn(self, expr);
     }
 };
@@ -48,7 +48,7 @@ pub const BinaryExpr = struct {
         self.* = .{ .left = left, .operator = operator, .right = right };
         return self;
     }
-    pub fn accept(expr: *const Expr, visitor: *Visitor) ?Literal {
+    pub fn accept(expr: *const Expr, visitor: *Visitor) ?Value {
         const self = @fieldParentPtr(Self, "expr", expr);
         return visitor.visitBinaryExpr(self.*);
     }
@@ -65,7 +65,7 @@ pub const GroupingExpr = struct {
         self.* = .{ .expression = expression };
         return self;
     }
-    pub fn accept(expr: *const Expr, visitor: *Visitor) ?Literal {
+    pub fn accept(expr: *const Expr, visitor: *Visitor) ?Value {
         const self = @fieldParentPtr(Self, "expr", expr);
         return visitor.visitGroupingExpr(self.*);
     }
@@ -75,14 +75,14 @@ pub const LiteralExpr = struct {
     const Self = @This();
     expr: Expr = Expr{ .acceptFn = accept },
 
-    value: Literal,
+    value: Value,
 
-    pub fn init(allocator: *Allocator, value: Literal) !*Self {
+    pub fn init(allocator: *Allocator, value: Value) !*Self {
         const self = try allocator.create(Self);
         self.* = .{ .value = value };
         return self;
     }
-    pub fn accept(expr: *const Expr, visitor: *Visitor) ?Literal {
+    pub fn accept(expr: *const Expr, visitor: *Visitor) ?Value {
         const self = @fieldParentPtr(Self, "expr", expr);
         return visitor.visitLiteralExpr(self.*);
     }
@@ -100,7 +100,7 @@ pub const UnaryExpr = struct {
         self.* = .{ .operator = operator, .right = right };
         return self;
     }
-    pub fn accept(expr: *const Expr, visitor: *Visitor) ?Literal {
+    pub fn accept(expr: *const Expr, visitor: *Visitor) ?Value {
         const self = @fieldParentPtr(Self, "expr", expr);
         return visitor.visitUnaryExpr(self.*);
     }
