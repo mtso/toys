@@ -1,3 +1,33 @@
+(
+  <- what,
+  then
+)
+
+what if every function call is potentially awaitable?
+[
+  <-(~(a, f) => f(a))(),
+]
+
+[
+  <-((a, f) ~> f(a))(),
+]
+[
+  <-((a, f) ≈> f(a))(),
+]
+[
+  <-((a, f) ~=> f(a))(),
+]
+
+<- all([
+  f(a),
+  f(b),
+])
+
+asdf <= f(a)
+
+
+(a, f) ~> 
+
 std = load("std")
 pogbear = load("pogbear")
 ports = load("config").ports
