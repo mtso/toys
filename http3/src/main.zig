@@ -36,20 +36,20 @@ const Resource = struct {
     pub fn init(name: []const u8) ResourceError!Self {
         const file = std.fs.cwd().openFile(name, .{}) catch |err| {
             if (err == std.fs.File.OpenError.FileNotFound) {
-                return ResourceError.NotFound;
+                return error.NotFound;
             } else {
                 std.log.err("Unhandled error: {s}", .{err});
-                return ResourceError.UnexpectedError;
+                return error.UnexpectedError;
             }
         };
         defer file.close();
 
         const info = file.stat() catch |err| {
             if (err == std.fs.File.OpenError.FileNotFound) {
-                return ResourceError.NotFound;
+                return error.NotFound;
             } else {
                 std.log.err("Unhandled error: {s}", .{err});
-                return ResourceError.UnexpectedError;
+                return error.UnexpectedError;
             }
         };
 
@@ -59,11 +59,17 @@ const Resource = struct {
         };
     }
 
-    pub fn readIntoConnection(self: Self, conn: net.StreamServer.Connection) !void {
-        const file = try std.fs.cwd().openFile(self.name, .{});
+    pub fn readIntoConnection(self: Self, conn: net.StreamServer.Connection) ResourceError!void {
+        const file = std.fs.cwd().openFile(self.name, .{}) catch |err| {
+            std.log.err("Failed to cwd().openFile: {s}", .{err});
+            return error.UnexpectedError;
+        };
         defer file.close();
 
-        const info = try file.stat();
+        const info = file.stat() catch |err| {
+            std.log.err("Failed to file.stat: {s}", .{err});
+            return error.UnexpectedError;
+        };
 
         const dest = conn.stream.handle;
         const src = file.handle;
@@ -71,53 +77,92 @@ const Resource = struct {
         const zero_iovec = &[0]os.iovec_const{};
         // Ref: https://github.com/ziglang/zig/blob/988afd51cd34649887f493b6ac9e05fcaa1f768d/lib/std/fs/file.zig#L1312-L1324
         // fn sendfile(out_fd: i32, in_fd: i32, in_offset: u64, in_len: u64, headers: []const iovec_const, trailers: []const iovec_const, flags: u32) SendFileError!u64
-        _ = try os.sendfile(dest, src, 0, info.size, zero_iovec, zero_iovec, 0);
+        _ = os.sendfile(dest, src, 0, info.size, zero_iovec, zero_iovec, 0) catch |err| {
+            std.log.err("Failed to os.sendfile: {s}", .{err});
+            return error.UnexpectedError;
+        };
     }
 };
 
-fn handleNotFound(conn: net.StreamServer.Connection) !void {
-    _ = try conn.stream.writer().print("HTTP/1.1 404 Not Found\nContent-Type: text/plain; charset=UTF-8\nContent-Length: 9\n\nNot Found", .{});
+fn respondBadRequest(conn: net.StreamServer.Connection) void {
+    _ = conn.stream.writer().print("HTTP/1.1 400 Bad Request\nContent-Type: text/plain; charset=UTF-8\nContent-Length: 11\n\nBad Request", .{}) catch |err| {
+        std.log.err("Failed to respond: {s}", .{err});
+    };
 }
 
-fn handleServerError(conn: net.StreamServer.Connection) !void {
-    _ = try conn.stream.writer().print("HTTP/1.1 500 Internal Server Error\nContent-Type: text/plain; charset=UTF-8\nContent-Length: 21\n\nInternal Server Error", .{});
+fn respondNotFound(conn: net.StreamServer.Connection) void {
+    _ = conn.stream.writer().print("HTTP/1.1 404 Not Found\nContent-Type: text/plain; charset=UTF-8\nContent-Length: 9\n\nNot Found", .{}) catch |err| {
+        std.log.err("Failed to respond: {s}", .{err});
+    };
+}
+
+fn respondMethodNotAllowed(conn: net.StreamServer.Connection) void {
+    _ = conn.stream.writer().print("HTTP/1.1 405 Method Not Allowed\nContent-Type: text/plain; charset=UTF-8\nContent-Length: 18\n\nMethod Not Allowed", .{}) catch |err| {
+        std.log.err("Failed to respond: {s}", .{err});
+    };
+}
+
+fn respondServerError(conn: net.StreamServer.Connection) void {
+    const message = "HTTP/1.1 500 Internal Server Error\nContent-Type: text/plain; charset=UTF-8\nContent-Length: 21\n\nInternal Server Error";
+    _ = conn.stream.writer().print(message, .{}) catch |err| {
+        std.log.err("Failed to respond: {s}", .{err});
+    };
 }
 
 // if path is longer than buffer, return not-found error
 // if path is not found, return not-found
 fn handle(conn: net.StreamServer.Connection) !void {
-    //std.log.info("Received connection", .{});
+    defer conn.stream.close();
 
-    if (false) {
-        try handleNotFound(conn);
+    var buf: [4096]u8 = undefined;
+    const stdout = std.io.getStdOut();
+
+    //const request = Request.create(conn, &buf);
+    //const method = context.slurpMethod(context);
+
+    //const method = slurpMethod(conn, &buf) catch |err| {
+    //    return request.handleError(err);
+    //};
+
+    const method = try conn.stream.reader().readUntilDelimiterOrEof(&buf, ' ');
+    if (method) |m| {
+        _ = try stdout.writer().write(m);
+        if (!mem.eql(u8, "GET", m)) {
+            return respondMethodNotAllowed(conn);
+        }
+    } else {
+        respondBadRequest(conn);
         return;
     }
 
-    var buf: [4096]u8 = undefined;
-    const method = try conn.stream.reader().readUntilDelimiterOrEof(&buf, ' ');
-    //std.log.info("method: {s}", .{method});
-    if (method) |m| {
-        _ = try std.io.getStdOut().writer().write(m);
+    if (method == null) {
+        respondBadRequest(conn);
+        return;
     }
-    //std.io.getStdOut().writer().write(method.?);
-    const path = try conn.stream.reader().readUntilDelimiterOrEof(&buf, ' ');
-    if (path) |p| {
-        _ = try std.io.getStdOut().writer().print(" {s}", .{p});
+ 
+    const pathP = conn.stream.reader().readUntilDelimiterOrEof(&buf, ' ') catch |err| {
+        std.log.warn("Failed to parse path: {s}", .{err});
+        respondBadRequest(conn);
+        return;
+    };
+
+    if (pathP) |p| {
+        _ = try stdout.writer().print(" {s}", .{p});
+    } else {
+        respondBadRequest(conn);
+        return;
     }
-    _ = try std.io.getStdOut().writer().write("\n");
-    //std.log.info(" path: {s}", .{path});
+    _ = try stdout.writer().write("\n");
 
-    const len = path.?.len;
-    //std.log.info("pathlen: {d}", .{len});
-
-    const filename = path.?[1..len];
+    const path = pathP.?;
+    const len = path.len;
+    const filename = path[1..len];
     
-    //const filename = "static/index.html";
     const res = Resource.init(filename) catch |err| {
         if (err == ResourceError.NotFound) {
-            try handleNotFound(conn);
+            respondNotFound(conn);
         } else {
-            try handleServerError(conn);
+            respondServerError(conn);
         }
         return;
     };
@@ -129,8 +174,8 @@ fn handle(conn: net.StreamServer.Connection) !void {
     _ = try conn.stream.writer().print("Content-Length: {d}", .{res.info.size});
     _ = conn.stream.write(delim) catch |e| std.log.err("unable to send: {}\n", .{e});
 
-    try res.readIntoConnection(conn);
-
-    conn.stream.close();
+    res.readIntoConnection(conn) catch {
+        return respondServerError(conn);
+    };
 }
 
