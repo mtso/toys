@@ -13,7 +13,7 @@ pub fn main() anyerror!void {
     var server = net.StreamServer.init(.{});
     defer server.deinit();
 
-    try server.listen(net.Address.parseIp("127.0.0.1", 8080) catch unreachable);
+    try server.listen(net.Address.parseIp("0.0.0.0", 8080) catch unreachable);
     std.log.warn("listening at {}\n", .{server.listen_address});
 
     while (true) {
@@ -167,7 +167,7 @@ fn handle(conn: net.StreamServer.Connection) !void {
         return;
     };
 
-    const header = "HTTP/1.1 200 OK\nContent-Type: text/html\n";
+    const header = "HTTP/1.1 200 OK\nContent-Type: text/plain\n";
     const delim = "\n\n";
 
     _ = conn.stream.write(header) catch |e| std.log.err("unable to send: {}\n", .{e});
