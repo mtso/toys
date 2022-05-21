@@ -76,25 +76,15 @@ pub const DB = struct {
     }
 
     pub fn set(self: *Self, key: []const u8, value: []const u8) !void {
-        var key_bytes = try self.allocator.alloc(u8, key.len);
-        var value_bytes = try self.allocator.alloc(u8, value.len);
-        std.mem.copy(u8, key_bytes, key);
-        std.mem.copy(u8, value_bytes, value);
-
-        try self.set_inmemory(key_bytes, value_bytes);
+        try self.setInmemory(
+            try self.toOwned(key),
+            try self.toOwned(value)
+        );
         try self.writeHead(key.len, value.len);
-        const key_bytes_written = try self.file.write(key_bytes);
+        const key_bytes_written = try self.file.write(key);
         assert(key_bytes_written == key.len);
-        const value_bytes_written = try self.file.write(value_bytes);
+        const value_bytes_written = try self.file.write(value);
         assert(value_bytes_written == value.len);
-    }
-
-    pub fn set_inmemory(self: *Self, key: []u8, value: []u8) !void {
-        if (self.map.fetchRemove(key)) |kv| {
-            self.allocator.free(kv.key);
-            self.allocator.free(kv.value);
-        }
-        try self.map.put(key, value);
     }
 
     pub fn get(self: *Self, key: []const u8) []const u8 {
@@ -103,6 +93,21 @@ pub const DB = struct {
        } else {
            return "";
        }
+    }
+
+    fn setInmemory(self: *Self, key: []u8, value: []u8) !void {
+        if (self.map.fetchRemove(key)) |kv| {
+            self.allocator.free(kv.key);
+            self.allocator.free(kv.value);
+        }
+        try self.map.put(key, value);
+    }
+
+    // Allocates memory to copy the string and returns its pointer.
+    fn toOwned(self: *Self, src: []const u8) ![]u8 {
+        var bytes = try self.allocator.alloc(u8, src.len);
+        std.mem.copy(u8, bytes, src);
+        return bytes; 
     }
 
     fn writeHead(self: *Self, key_size: u64, value_size: u64) !void {
@@ -137,16 +142,19 @@ pub const DB = struct {
                 head.value_size,
             });
 
-            var key_bytes = try self.allocator.alloc(u8, head.key_size);
-            const key_bytes_read = try self.file.readAll(key_bytes[0..]);
-            assert(key_bytes_read == key_bytes.len);
-
-            var value_bytes = try self.allocator.alloc(u8, head.value_size);
-            const value_bytes_read = try self.file.readAll(value_bytes[0..]);
-            assert(value_bytes_read == value_bytes.len);
-
-            try self.set_inmemory(key_bytes, value_bytes);
+            var key = try self.readFileBytes(head.key_size);
+            var value = try self.readFileBytes(head.value_size);
+            try self.setInmemory(key, value);
         }
+    }
+
+    // Reads the number of bytes from the opened file as specified per `size`.
+    // Caller owns the memory of the returned slice.
+    fn readFileBytes(self: *Self, size: usize) ![]u8 {
+        var bytes = try self.allocator.alloc(u8, size);
+        const bytes_read = try self.file.readAll(bytes[0..]);
+        assert(bytes_read == size);
+        return bytes;
     }
 };
 
