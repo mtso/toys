@@ -21,14 +21,14 @@ test "DB" {
         var db = try DB.open("foo.db", std.testing.allocator);
         try db.set("foo", "bar");
         const value = db.get("foo");
-        try std.testing.expect(std.mem.eql(u8, value.?, "bar"));
+        try std.testing.expect(std.mem.eql(u8, value, "bar"));
         db.close();
     }
 
     if (true) {
         var db = try DB.open("foo.db", std.testing.allocator);
         const value = db.get("foo");
-        try std.testing.expect(std.mem.eql(u8, value.?, "bar"));
+        try std.testing.expect(std.mem.eql(u8, value, "bar"));
         db.close();
     }
 
@@ -36,14 +36,14 @@ test "DB" {
         var db = try DB.open("foo.db", std.testing.allocator);
         try db.set("foo", "bar");
         const value = db.get("foo");
-        try std.testing.expect(std.mem.eql(u8, value.?, "bar"));
+        try std.testing.expect(std.mem.eql(u8, value, "bar"));
         db.close();
     }
 
     if (true) {
         var db = try DB.open("foo.db", std.testing.allocator);
         const value = db.get("foo");
-        try std.testing.expect(std.mem.eql(u8, value.?, "bar"));
+        try std.testing.expect(std.mem.eql(u8, value, "bar"));
         db.close();
     }
 }
@@ -104,8 +104,12 @@ const DB = struct {
         assert(value_bytes_written == value.len);
     }
 
-    pub fn get(self: *Self, key: []const u8) ?[]const u8 {
-       return self.map.get(key);
+    pub fn get(self: *Self, key: []const u8) []const u8 {
+       if (self.map.get(key)) |value| {
+           return value;
+       } else {
+           return "";
+       }
     }
 
     fn writeHead(self: *Self, key_size: u64, value_size: u64) !void {
@@ -164,12 +168,12 @@ pub fn main() anyerror!void {
     var db = try DB.open("foo.db", allocator);
     defer db.close();
 
-    if (false) {
+    if (true) {
         try db.set("hi", "boo");
     }
 
-    if (false) {
-        const value = db.get("hi").?;
+    if (true) {
+        const value = db.get("hi");
         std.debug.assert(std.mem.eql(u8, value, "boo"));
         std.debug.print("hi: {s}\n", .{ value });
     }
