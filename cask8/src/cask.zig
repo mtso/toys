@@ -137,6 +137,8 @@ pub const DB = struct {
             .file = file,
             .allocator = allocator,
         };
+        // Ensuring total capacity here impacts the amount of memory
+        // allocated at init time.
         //try self.keydir.ensureTotalCapacity(10_000);
         try self.reconstitute();
         return self;
@@ -148,11 +150,7 @@ pub const DB = struct {
         {
             var it = self.keydir.iterator();
             while (it.next()) |entry| {
-                if (self.keydir.fetchRemove(entry.key_ptr.*)) |kv| {
-                    self.allocator.free(kv.key);
-                }
-                //self.allocator.free(entry.key_ptr.*);
-                // self.allocator.destroy(entry.value_ptr.*);
+                self.allocator.free(entry.key_ptr.*);
             }
             self.keydir.deinit();
         }
@@ -166,7 +164,6 @@ pub const DB = struct {
         const value_bytes_written = try self.file.write(value);
         assert(value_bytes_written == value.len);
 
-        //var vi = try self.allocator.create(ValueInfo);
         const vi = ValueInfo{
             .timestamp = head.timestamp,
             .value_size = value.len,
@@ -175,7 +172,6 @@ pub const DB = struct {
         self.cursor += @sizeOf(Head) + key.len + value.len;
         if (self.keydir.fetchRemove(key)) |kv| {
             self.allocator.free(kv.key);
-            // self.allocator.destroy(kv.value);
         }
         try self.keydir.put(
             try self.toOwned(key),
@@ -222,7 +218,8 @@ pub const DB = struct {
             .key_size = key_size,
             .value_size = value_size,
         };
-        const bytes = @bitCast([@sizeOf(Head)]u8, head);
+        const Headtype = [@sizeOf(Head)]u8;
+        const bytes = @bitCast(Headtype, head);
         const bytes_written = try self.file.write(bytes[0..]);
         assert(bytes_written == bytes.len);
         return head;
@@ -254,7 +251,6 @@ pub const DB = struct {
             var key = try self.readFileBytes(head.key_size);
             try self.file.seekBy(@intCast(i64, head.value_size));
 
-            //var vi = try self.allocator.create(ValueInfo);
             const vi = ValueInfo{
                 .timestamp = head.timestamp,
                 .value_size = head.value_size,
@@ -262,7 +258,6 @@ pub const DB = struct {
             };
             if (self.keydir.fetchRemove(key)) |kv| {
                 self.allocator.free(kv.key);
-                // self.allocator.destroy(kv.value);
             }
             try self.keydir.put(
                 key,
