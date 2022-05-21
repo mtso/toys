@@ -14,7 +14,37 @@ test "Keydir" {
     try std.testing.expectEqual(v2.value_size, v.value_size);
 }
 
+test "DB get2 simple" {
+    if (true) return;
+
+    const allocator = std.testing.allocator;
+
+    const file = try std.fs.cwd().createFile("foo.db", .{ .truncate = true });
+    file.close();
+
+    if (true) {
+        var db = try DB.open("foo.db", allocator);
+        try db.set("foo", "bar");
+        try db.set("foos", "bars");
+        const value = try db.get2("foo", allocator);
+        try std.testing.expect(std.mem.eql(u8, value, "bar"));
+        db.close();
+        allocator.free(value);
+    }
+    if (true) {
+        var db = try DB.open("foo.db", allocator);
+        const value = try db.get2("foo", allocator);
+        const value2 = try db.get2("foos", allocator);
+        try std.testing.expect(std.mem.eql(u8, value, "bar"));
+        try std.testing.expect(std.mem.eql(u8, value2, "bars"));
+        db.close();
+        allocator.free(value);
+        allocator.free(value2);
+    }
+}
+
 test "DB get2" {
+    if (false) return;
     const allocator = std.testing.allocator;
 
     const file = try std.fs.cwd().createFile("foo.db", .{ .truncate = true });
@@ -38,10 +68,10 @@ test "DB get2" {
 
     if (true) {
         var db = try DB.open("foo.db", allocator);
+        defer db.close();
         try db.set("foos", "bars");
         const value = try db.get2("foos", allocator);
         try std.testing.expect(std.mem.eql(u8, value, "bars"));
-        db.close();
         allocator.free(value);
     }
     if (true) {
@@ -50,6 +80,7 @@ test "DB get2" {
         try std.testing.expect(std.mem.eql(u8, value, "bars"));
 
         const value2 = try db.get2("foo", allocator);
+        std.debug.print("whatwasthis: {s}\n", .{ value2 });
         try std.testing.expect(std.mem.eql(u8, value2, "bar"));
         db.close();
         allocator.free(value);
@@ -90,7 +121,7 @@ pub const Keydir = std.StringHashMap(ValueInfo);
 pub const DB = struct {
     const Self = @This();
 
-    keydir: std.StringHashMap(*ValueInfo),
+    keydir: std.StringHashMap(ValueInfo),
     file: std.fs.File,
     cursor: u64 = 0,
     allocator: std.mem.Allocator,
@@ -102,7 +133,7 @@ pub const DB = struct {
         });
 
         var self = Self{
-            .keydir = std.StringHashMap(*ValueInfo).init(allocator),
+            .keydir = std.StringHashMap(ValueInfo).init(allocator),
             .file = file,
             .allocator = allocator,
         };
@@ -117,8 +148,11 @@ pub const DB = struct {
         {
             var it = self.keydir.iterator();
             while (it.next()) |entry| {
-                self.allocator.free(entry.key_ptr.*);
-                self.allocator.destroy(entry.value_ptr.*);
+                if (self.keydir.fetchRemove(entry.key_ptr.*)) |kv| {
+                    self.allocator.free(kv.key);
+                }
+                //self.allocator.free(entry.key_ptr.*);
+                // self.allocator.destroy(entry.value_ptr.*);
             }
             self.keydir.deinit();
         }
@@ -132,8 +166,8 @@ pub const DB = struct {
         const value_bytes_written = try self.file.write(value);
         assert(value_bytes_written == value.len);
 
-        var vi = try self.allocator.create(ValueInfo);
-        vi.* = ValueInfo{
+        //var vi = try self.allocator.create(ValueInfo);
+        const vi = ValueInfo{
             .timestamp = head.timestamp,
             .value_size = value.len,
             .value_pos = self.cursor + @sizeOf(Head) + key.len,
@@ -141,7 +175,7 @@ pub const DB = struct {
         self.cursor += @sizeOf(Head) + key.len + value.len;
         if (self.keydir.fetchRemove(key)) |kv| {
             self.allocator.free(kv.key);
-            self.allocator.destroy(kv.value);
+            // self.allocator.destroy(kv.value);
         }
         try self.keydir.put(
             try self.toOwned(key),
@@ -220,15 +254,15 @@ pub const DB = struct {
             var key = try self.readFileBytes(head.key_size);
             try self.file.seekBy(@intCast(i64, head.value_size));
 
-            var vi = try self.allocator.create(ValueInfo);
-            vi.* = ValueInfo{
+            //var vi = try self.allocator.create(ValueInfo);
+            const vi = ValueInfo{
                 .timestamp = head.timestamp,
                 .value_size = head.value_size,
                 .value_pos = self.cursor + @sizeOf(Head) + key.len,
             };
             if (self.keydir.fetchRemove(key)) |kv| {
                 self.allocator.free(kv.key);
-                self.allocator.destroy(kv.value);
+                // self.allocator.destroy(kv.value);
             }
             try self.keydir.put(
                 key,
