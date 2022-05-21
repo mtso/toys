@@ -7,3 +7,4 @@ zig-macos-x86_64-0.8.0-dev.2729+87dae0ce9 zig-macos-x86_64-0.8.0-dev.2729+87dae0
 *.wasm
 *.tar.xz
 zig-macos*/
+*.swp
