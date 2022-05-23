@@ -17,11 +17,15 @@ const Number = struct {
         const right = Number.from(r);
         return std.math.order(left.value, right.value);
     }
+
+    pub fn reverseOrder(l: *rb.Node, r: *rb.Node) std.math.Order {
+        return std.math.Order.invert(Number.order(l, r));
+    }
 };
 
 pub fn main() anyerror!void {
     var tree: rb.Tree = undefined;
-    tree.init(Number.order);
+    tree.init(Number.reverseOrder);
     var nodes: [5]Number = undefined;
 
     nodes[0].value = 0;
