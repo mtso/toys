@@ -409,6 +409,36 @@ pub const Tree = struct {
         tree.root = null;
         tree.compareFn = f;
     }
+
+    pub const Iterator = struct {
+        tree: *Tree,
+        curr: ?*Node,
+
+        pub fn next(it: *Iterator) ?*Node {
+            if (it.curr) |curr| {
+                it.curr = curr.next();
+                return it.curr;
+            } else {
+                if (it.tree.first()) |node| {
+                    it.curr = node;
+                    return node;
+                } else {
+                    return null;
+                }
+            }
+        }
+
+        pub fn reset(it: *Iterator) void {
+            it.curr = null;
+        }
+    };
+
+    pub fn iterator(tree: *Tree) Iterator {
+        return Iterator{
+            .tree = tree,
+            .curr = null,
+        };
+    }
 };
 
 fn rotateLeft(node: *Node, tree: *Tree) void {

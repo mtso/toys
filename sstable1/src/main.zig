@@ -36,6 +36,17 @@ pub fn main() anyerror!void {
     _ = tree.insert(&nodes[2].node);
     _ = tree.insert(&nodes[3].node);
 
+    var it = tree.iterator();
+    while (it.next()) |node| {
+        var value = Number.from(node).value;
+        std.debug.print("{d}\n", .{ value });
+    }
+    it.reset();
+    while (it.next()) |node| {
+        var value = Number.from(node).value;
+        std.debug.print("{d}\n", .{ value });
+    }
+
     var first: ?*rb.Node = undefined;
     var last: ?*rb.Node = undefined;
     if (tree.first()) |node| {
