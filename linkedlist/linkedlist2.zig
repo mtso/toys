@@ -17,9 +17,9 @@ pub const LinkedList = struct {
     len: usize = 0,
     head: ?*Node = null,
     tail: ?*Node = null,
-    allocator: *Allocator,
+    allocator: Allocator,
 
-    pub fn init(allocator: *Allocator) Self {
+    pub fn init(allocator: Allocator) Self {
         return Self{
             .allocator = allocator,
         };
@@ -154,7 +154,7 @@ test "insert/remove/indexOf" {
     list.remove();
     try expect(1 == list.len);
     list.remove();
-    if (list.indexOf("hi")) |index| {
+    if (list.indexOf("hi")) |_| {
         try expect(false);
     } else |err| switch (err) {
         LinkedList.ListError.NotFound => try expect(true),
@@ -182,7 +182,7 @@ test "iterator" {
 
 test "deinit" {
     const expect = std.testing.expect;
-    const eql = std.mem.eql;
+    // const eql = std.mem.eql;
     var test_allocator = std.testing.allocator;
 
     var list = LinkedList.init(test_allocator);
@@ -215,7 +215,7 @@ test "insertFirst/removeFirst/indexOf" {
     try expect(eql(u8, list.head.?.value, "hi"));
     try expect(1 == list.len);
     list.removeFirst();
-    if (list.indexOf("hi")) |index| {
+    if (list.indexOf("hi")) |_| {
         try expect(false);
     } else |err| switch (err) {
         LinkedList.ListError.NotFound => try expect(true),
