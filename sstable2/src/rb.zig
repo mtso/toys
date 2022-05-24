@@ -47,8 +47,7 @@ pub const Node = struct {
                 if (node != p.right)
                     return p;
                 node = p;
-            } else
-                return null;
+            } else return null;
         }
     }
 
@@ -68,8 +67,7 @@ pub const Node = struct {
                 if (node != p.left)
                     return p;
                 node = p;
-            } else
-                return null;
+            } else return null;
         }
     }
 
@@ -257,8 +255,7 @@ pub const Tree = struct {
         if (node.left == null and node.right == null) {
             if (maybe_parent) |parent| {
                 parent.setChild(null, parent.left == node);
-            } else
-                tree.root = null;
+            } else tree.root = null;
             color = node.getColor();
             newnode = null;
         } else {
@@ -266,13 +263,11 @@ pub const Tree = struct {
                 next = node.right.?; // Not both null as per above
             } else if (node.right == null) {
                 next = node.left.?; // Not both null as per above
-            } else
-                next = node.right.?.getFirst(); // Just checked for null above
+            } else next = node.right.?.getFirst(); // Just checked for null above
 
             if (maybe_parent) |parent| {
                 parent.setChild(next, parent.left == node);
-            } else
-                tree.root = next;
+            } else tree.root = next;
 
             if (node.left != null and node.right != null) {
                 const left = node.left.?;
@@ -394,8 +389,7 @@ pub const Tree = struct {
 
         if (old.getParent()) |parent| {
             parent.setChild(new, parent.left == old);
-        } else
-            tree.root = new;
+        } else tree.root = new;
 
         if (old.left) |left|
             left.setParent(new);
