@@ -139,6 +139,41 @@ fn Tree(comptime T: anytype, compareFn: fn (anytype, anytype) math.Order) type {
             // TODO traverse the nodes and print
             _ = try writer.write("I'm a tree");
         }
+
+        pub const FillError = error {
+            BufferTooShort,
+        };
+
+        pub const Filler = struct {
+            index: usize = 0,
+            context: Self,
+
+            pub fn fill(self: *Filler, buf: []T) FillError!void {
+                if (buf.len < self.context.len) {
+                    return error.BufferTooShort;
+                }
+                if (self.context.root) |root| {
+                    self.fillNode(buf, root);
+                }
+            }
+
+            pub fn fillNode(self: *Filler, buf: []T, node: *Node) void {
+                if (node.left) |left| {
+                    self.fillNode(buf, left);
+                }
+                buf[self.index] = node.value;
+                self.index += 1;
+                if (node.right) |right| {
+                    self.fillNode(buf, right);
+                }
+            }
+        };
+
+        pub fn filler(self: Self) Filler {
+            return .{
+                .context = self,
+            };
+        }
     };
 }
 
@@ -179,15 +214,26 @@ fn entryOrder(a: anytype, b: anytype) math.Order {
 test "with value" {
     var entries = [_]Entry{
         .{ .key = 1, .value = 2 },
+        .{ .key = 2, .value = 4 },
+        .{ .key = 3, .value = 6 },
     };
 
     var tree = Tree(Entry, entryOrder).init(std.testing.allocator);
     defer tree.deinit();
 
+    try tree.insert(entries[2]);
     try tree.insert(entries[0]);
+    try tree.insert(entries[1]);
 
     const entry = tree.get(.{ .key = 1, .value = undefined });
     try std.testing.expectEqual(@as(u128, 2), entry.?.value);
+
+    var buf: []Entry = try std.testing.allocator.alloc(Entry, tree.len);
+    defer std.testing.allocator.free(buf);
+    try tree.filler().fill(buf);
+    try std.testing.expectEqual(entries[0].value, buf[0].value);
+    try std.testing.expectEqual(entries[1].value, buf[1].value);
+    try std.testing.expectEqual(entries[2].value, buf[2].value);
 }
 
 fn couldBeTruthy() ?bool {
