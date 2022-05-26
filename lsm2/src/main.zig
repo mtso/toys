@@ -67,7 +67,7 @@ const Lsmt = struct {
     }
 
     pub fn put(self: *Self, key: ulid.Ulid, value: u128) !void {
-        try self.memtable.insert(Entry{ .key = key, .value = value });
+        _ = try self.memtable.insert(Entry{ .key = key, .value = value });
         if (self.memtable.len >= self.maxSize) {
             try self.flushMemtable();
         }
@@ -150,7 +150,7 @@ const Lsmt = struct {
             const b = self.files.items[bIndex];
             const merged = try a.merge(b);
             // Insert _before_ smaller, earlier files.
-            try self.files.insert(aIndex, merged);
+            _ = try self.files.insert(aIndex, merged);
             const aFile = self.files.orderedRemove(aIndex + 1);
             const bFile = self.files.orderedRemove(aIndex + 1);
             try aFile.deleteFile();
@@ -181,12 +181,10 @@ test "init" {
         id.* = try ulidFactory.next();
     }
 
-    // FIXME Need to allow replace operation in binary tree!
-    if (false) {
-        for (ids) |id| {
-            try lsmt.put(id, @intCast(u128, id.timestamp() * 2));
-        }
+    for (ids) |id| {
+        try lsmt.put(id, @intCast(u128, id.timestamp() * 2));
     }
+    // Override all existing values!
     for (ids) |id| {
         try lsmt.put(id, @intCast(u128, id.timestamp()));
     }
@@ -206,7 +204,7 @@ pub fn main() anyerror!void {
 
     var ulidFactory = ulid.DefaultMonotonicFactory.init();
 
-    var ids = try std.testing.allocator.alloc(ulid.Ulid, 8 * 10_000);
+    var ids = try std.testing.allocator.alloc(ulid.Ulid, 8 * 100_000);
     defer std.testing.allocator.free(ids);
     for (ids) |*id| {
         id.* = try ulidFactory.next();

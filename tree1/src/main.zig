@@ -140,10 +140,6 @@ pub fn Tree(comptime T: anytype, compareFn: fn (anytype, anytype) math.Order) ty
             }
         }
 
-        pub fn tryCompare(_: Self, a: T, b: T) math.Order {
-            return compareFn(a, b);
-        }
-
         pub fn format(value: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
             _ = value;
             _ = fmt;
@@ -247,4 +243,19 @@ test "with value" {
     try std.testing.expectEqual(entries[0].value, buf[0].value);
     try std.testing.expectEqual(entries[1].value, buf[1].value);
     try std.testing.expectEqual(entries[2].value, buf[2].value);
+}
+
+pub fn main() anyerror!void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = gpa.allocator();
+    var tree = Tree(u128, std.math.order).init(allocator);
+    _ = try tree.insert(5);
+    _ = try tree.insert(6);
+
+    if (tree.root) |node| {
+        std.debug.print("result: {any}\n", .{node.value});
+        if (node.right) |node2| {
+            std.debug.print("result2: {any}\n", .{node2.value});
+        }
+    }
 }
