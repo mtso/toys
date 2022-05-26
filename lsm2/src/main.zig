@@ -96,6 +96,8 @@ const Lsmt = struct {
         } else return null;
     }
 
+    // Does a binary search to find the DiskFile with an ID that is one before
+    // the target key (the file that would contain the key).
     fn binarySearchLte(items: []DiskFile, key: ulid.Ulid) ?DiskFile {
         if (items.len <= 0) {
             return null;
@@ -105,14 +107,25 @@ const Lsmt = struct {
             return null;
         }
 
+        // [0, 2, 3, 5]
+        //        ^  ^ 6
+        // [0, 2, 3, 5]
+        //        ^4 ^
+        // 0, 3 ; 2
+        // 2, 3 ; 3
+
+        // [1] 2
+        // 0, 0 ; 0
+
         // Clamp around key and then return the index before it.
         var left: usize = 0;
         var right: usize = items.len - 1;
-        while (right - left > 1) {
-            const mid = left + (right - left) / 2;
+        while (right - left > 0) {
+            const mid = math.min(left + (right - left + 1) / 2, items.len - 1);
             switch (ulid.order(items[mid].id, key)) {
                 .eq => return items[mid],
-                .gt => right = mid,
+                // Subtract one from mid for the file preceding the mid.
+                .gt => right = mid - 1,
                 .lt => left = mid,
             }
         }
@@ -199,12 +212,12 @@ pub fn main() anyerror!void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
 
-    var lsmt = try Lsmt.init("main.db", allocator, .{});
+    var lsmt = try Lsmt.init("main4.db", allocator, .{});
     defer lsmt.deinit();
 
     var ulidFactory = ulid.DefaultMonotonicFactory.init();
 
-    var ids = try std.testing.allocator.alloc(ulid.Ulid, 8 * 100_000);
+    var ids = try std.testing.allocator.alloc(ulid.Ulid, 8 * 2);
     defer std.testing.allocator.free(ids);
     for (ids) |*id| {
         id.* = try ulidFactory.next();
@@ -226,7 +239,7 @@ pub fn main() anyerror!void {
     }
 
     if (true) {
-        const id = try ulid.Ulid.parseBase32("01G3ZH1YGFNV54T99J0AQBHT3G");
+        const id = try ulid.Ulid.parseBase32("01G40TG54JBVS6Y5XSEMFV78V7");
         const value = try lsmt.get(id);
         std.debug.print("found value from previous file: key={?} {any}\n", .{ id, value });
     }
