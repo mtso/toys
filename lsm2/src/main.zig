@@ -17,6 +17,7 @@ const Memtable = Tree(Entry, common.entryOrder);
 
 const LsmtOptions = struct {
     maxSize: u32 = 8,
+    compactionThreshold: usize = 16,
 };
 
 const Lsmt = struct {
@@ -25,6 +26,7 @@ const Lsmt = struct {
     allocator: mem.Allocator,
     memtable: Memtable,
     maxSize: u32,
+    compactionThreshold: usize,
     dir: fs.Dir,
     files: ArrayList(DiskFile),
 
@@ -34,6 +36,7 @@ const Lsmt = struct {
             .allocator = allocator,
             .memtable = Memtable.init(allocator),
             .maxSize = options.maxSize,
+            .compactionThreshold = options.compactionThreshold,
             .files = ArrayList(DiskFile).init(allocator),
         };
         try self.reconstitute();
@@ -62,9 +65,11 @@ const Lsmt = struct {
 
     pub fn put(self: *Self, key: ulid.Ulid, value: u128) !void {
         try self.memtable.insert(Entry{ .key = key, .value = value });
-
         if (self.memtable.len >= self.maxSize) {
             try self.flushMemtable();
+        }
+        if (self.files.items.len >= self.compactionThreshold) {
+            self.compact() catch |err| std.log.err("Failure during compaction! {?}\n", .{err});
         }
     }
 
@@ -73,7 +78,6 @@ const Lsmt = struct {
         var items = try self.allocator.alloc(Entry, self.memtable.len);
         try self.memtable.filler().fill(items[0..]);
         const df = try DiskFile.write(self.dir, items[0..]);
-        _ = df;
         try self.files.append(df);
         self.memtable.removeAll();
         assert(self.memtable.len == 0);
@@ -98,19 +102,70 @@ const Lsmt = struct {
             return null;
         }
 
+        // Clamp around key and then return the index before it.
         var left: usize = 0;
-        var right: usize = items.len;
-
-        while (left < right) {
-            const mid = left + (right - left + 1) / 2;
-            switch (ulid.order(key, items[mid].id)) {
+        var right: usize = items.len - 1;
+        while (right - left > 1) {
+            const mid = left + (right - left) / 2;
+            switch (ulid.order(items[mid].id, key)) {
                 .eq => return items[mid],
-                .gt => left = mid,
-                .lt => right = mid - 1,
+                .gt => right = mid,
+                .lt => left = mid,
             }
         }
-
         return items[left];
+    }
+
+    pub fn compact(self: *Self) !void {
+        const maxLevel: u3 = 7;
+        var level: u3 = 0;
+        while (level < maxLevel) : (level += 1) {
+            std.debug.print("Compacting level: {d}\n", .{level});
+            try self.compactLevel(level);
+        }
+
+        std.debug.print("finished compacting: {any}\n", .{self.files});
+    }
+
+    pub fn compactLevel(self: *Self, level: u3) !void {
+        var index: usize = 0;
+        while (index < self.files.items.len) {
+            std.debug.print("processing index={d} items={d}\n", .{ index, self.files.items.len });
+
+            const aIndex_ = indexOfNext(&self.files, level, index);
+            if (aIndex_ == null) return;
+            const aIndex = aIndex_.?;
+
+            const bIndex_ = indexOfNext(&self.files, level, aIndex + 1);
+            if (bIndex_ == null) return;
+            const bIndex = bIndex_.?;
+
+            if (bIndex - aIndex != 1) {
+                index = bIndex;
+                continue;
+            }
+
+            const a = self.files.items[aIndex];
+            const b = self.files.items[bIndex];
+            const merged = try a.merge(b);
+            // Insert _before_ smaller, earlier files.
+            try self.files.insert(aIndex, merged);
+            const aFile = self.files.orderedRemove(aIndex + 1);
+            const bFile = self.files.orderedRemove(aIndex + 1);
+            try aFile.deleteFile();
+            try bFile.deleteFile();
+
+            index += 1;
+        }
+    }
+
+    pub fn indexOfNext(files: *ArrayList(DiskFile), level: u3, from: usize) ?usize {
+        for (files.items[from..]) |file, i| {
+            if (file.level == level) {
+                return from + i;
+            }
+        }
+        return null;
     }
 };
 
@@ -150,7 +205,7 @@ pub fn main() anyerror!void {
 
     var ulidFactory = ulid.DefaultMonotonicFactory.init();
 
-    var ids = try std.testing.allocator.alloc(ulid.Ulid, 8 * 1000);
+    var ids = try std.testing.allocator.alloc(ulid.Ulid, 8 * 10_000);
     defer std.testing.allocator.free(ids);
     for (ids) |*id| {
         id.* = try ulidFactory.next();
@@ -172,7 +227,7 @@ pub fn main() anyerror!void {
     }
 
     if (true) {
-        const id = try ulid.Ulid.parseBase32("01G3ZDWC643WPZ4JNNWZ126B4Y");
+        const id = try ulid.Ulid.parseBase32("01G3ZH1YGFNV54T99J0AQBHT3G");
         const value = try lsmt.get(id);
         std.debug.print("found value from previous file: key={?} {any}\n", .{ id, value });
     }

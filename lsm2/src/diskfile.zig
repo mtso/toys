@@ -170,6 +170,7 @@ pub const DiskFile = struct {
         }
         df.id.fillBase32(df.filename[0..26]);
 
+        var count: usize = 0;
         var ita = try self.iterator();
         var itb = try b.iterator();
 
@@ -183,12 +184,14 @@ pub const DiskFile = struct {
                 .lt => {
                     const bytes = @bitCast([@sizeOf(Entry)]u8, nexta.?);
                     const write_len = try file.writer().write(bytes[0..]);
+                    count += 1;
                     assert(write_len == bytes.len);
                     nexta = try ita.next();
                 },
                 .gt => {
                     const bytes = @bitCast([@sizeOf(Entry)]u8, nextb.?);
                     const write_len = try file.writer().write(bytes[0..]);
+                    count += 1;
                     assert(write_len == bytes.len);
                     nextb = try itb.next();
                 },
@@ -196,6 +199,7 @@ pub const DiskFile = struct {
                     // TODO handle duplicate keys.
                     const bytes = @bitCast([@sizeOf(Entry)]u8, nexta.?);
                     const write_len = try file.writer().write(bytes[0..]);
+                    count += 1;
                     assert(write_len == bytes.len);
                     nexta = try ita.next();
                 },
@@ -205,10 +209,12 @@ pub const DiskFile = struct {
         if (nexta) |nexta_| {
             const bytes = @bitCast([@sizeOf(Entry)]u8, nexta_);
             const write_len = try file.writer().write(bytes[0..]);
+            count += 1;
             assert(write_len == bytes.len);
             while (try ita.next()) |entry| {
                 const bytes_ = @bitCast([@sizeOf(Entry)]u8, entry);
                 const write_len_ = try file.writer().write(bytes_[0..]);
+                count += 1;
                 assert(write_len_ == bytes_.len);
             }
         }
@@ -216,14 +222,17 @@ pub const DiskFile = struct {
         if (nextb) |nextb_| {
             const bytes = @bitCast([@sizeOf(Entry)]u8, nextb_);
             const write_len = try file.writer().write(bytes[0..]);
+            count += 1;
             assert(write_len == bytes.len);
             while (try itb.next()) |entry| {
                 const bytes_ = @bitCast([@sizeOf(Entry)]u8, entry);
                 const write_len_ = try file.writer().write(bytes_[0..]);
+                count += 1;
                 assert(write_len_ == bytes_.len);
             }
         }
 
+        std.debug.print("merged filename={s} count={d}\n", .{ df.filename, count });
         return df;
     }
 
