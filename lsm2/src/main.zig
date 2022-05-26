@@ -18,6 +18,7 @@ const Memtable = Tree(Entry, common.entryOrder);
 const LsmtOptions = struct {
     maxSize: u32 = 8,
     compactionThreshold: usize = 16,
+    maxLevel: u3 = 7,
 };
 
 const Lsmt = struct {
@@ -27,6 +28,7 @@ const Lsmt = struct {
     memtable: Memtable,
     maxSize: u32,
     compactionThreshold: usize,
+    maxLevel: u3,
     dir: fs.Dir,
     files: ArrayList(DiskFile),
 
@@ -37,6 +39,7 @@ const Lsmt = struct {
             .memtable = Memtable.init(allocator),
             .maxSize = options.maxSize,
             .compactionThreshold = options.compactionThreshold,
+            .maxLevel = options.maxLevel,
             .files = ArrayList(DiskFile).init(allocator),
         };
         try self.reconstitute();
@@ -117,13 +120,11 @@ const Lsmt = struct {
     }
 
     pub fn compact(self: *Self) !void {
-        const maxLevel: u3 = 7;
         var level: u3 = 0;
-        while (level < maxLevel) : (level += 1) {
+        while (level < self.maxLevel) : (level += 1) {
             std.debug.print("Compacting level: {d}\n", .{level});
             try self.compactLevel(level);
         }
-
         std.debug.print("finished compacting: {any}\n", .{self.files});
     }
 
