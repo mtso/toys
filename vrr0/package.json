@@ -1,0 +1,15 @@
+{
+  "name": "vrr0",
+  "version": "0.1.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev": "concurrently --kill-others-on-fail \"node index.js --replica=0 --addresses=0.0.0.0:4000,0.0.0.0:4001,0.0.0.0:4002 --directory=data/replica0\" \"node index.js --replica=1 --addresses=0.0.0.0:4000,0.0.0.0:4001,0.0.0.0:4002 --directory=data/replica1\" \"node index.js --replica=2 --addresses=0.0.0.0:4000,0.0.0.0:4001,0.0.0.0:4002 --directory=data/replica2\"",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "mtso <~@mtso.io>",
+  "license": "MIT",
+  "devDependencies": {
+    "concurrently": "^7.2.1"
+  }
+}
