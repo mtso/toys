@@ -169,8 +169,6 @@ class Connection {
                 message = JSON.stringify(message);
             }
             this.socket.write(message);
-            // setTimeout(() => this.socket.write(message), 50);
-            // setImmediate(() => this.socket.write(message));
         }
         this.flushing = false;
     }
@@ -227,44 +225,31 @@ class MessageHub extends EventEmitter {
         this.server.on("connection", (socket) => {
             const connectionId = Math.random().toString().substring(2);
             console.log("got connection", connectionId);
-            socket.on("data", (buffer) => {
-                // Handle buffer that contains two JSON string-encoded messages
-                // with "}{" joiner heuristic.
-                const dataRaw = buffer.toString().split("}{");
-                const dataStrings = dataRaw.map((m, i) => {
-                    if (i < dataRaw.length - 1) m = m + "}";
-                    if (i > 0) m = "{" + m;
-                    return m;
-                });
-
-                dataStrings.forEach((dataString) => {
-                    let message;
-                    try {
-                        message = JSON.parse(dataString.trim());
-                    } catch (err) {
-                        return console.error("failed to parse message:", JSON.stringify(dataString), err);
-                    }
-
+            socket.on("data", (data) => {
+                try {
+                    // {
+                    //   "event": "prepare",
+                    //   ... other data fields
+                    // }
+                    const dataString = data.toString().trim();
+                    const message = JSON.parse(dataString);
                     if (!message.event) {
-                        return console.warn("incoming message is missing 'event'", message);
-                    }
-
-                    // We can add a client connection on their
-                    // request if it contains a client ID.
-                    if (message.clientId) {
-                        this.addClient({
-                            connectionId,
-                            socket,
-                            clientId: message.clientId,
-                        });
-                    }
-
-                    try {
+                        console.warn("incoming message is missing 'event'", message);
+                    } else {
+                        // We can add a client connection on their
+                        // request if it contains a client ID.
+                        if (message.clientId) {
+                            this.addClient({
+                                connectionId,
+                                socket,
+                                clientId: message.clientId,
+                            });
+                        }
                         this.emit(message.event, message);
-                    } catch (err) {
-                        console.error("message handling error", err);
                     }
-                });
+                } catch (err) {
+                    console.error("failed to parse message: ", data.toString().trim());
+                }
             });
             socket.on("error", (err) => {
                 console.error("receive socket error", err);
@@ -303,8 +288,7 @@ class Replica {
         this.f = Math.ceil((replicaCount - 1) / 2);
 
         this.view = 0;
-        this.status = "normal"; // "view_change", "recovering"
-        this.viewLastNormal = this.view;
+        this.status = "normal";
         this.op = 0;
         this.commit = 0;
         this.primary = 0;
@@ -313,10 +297,6 @@ class Replica {
 
         this.clientTable = {};
         this.opToClientId = {};
-
-        this.startViewChangeCount = {};
-        this.doViewChangeCount = {};
-        this.doViewChangeInfo = {};
 
         this.hub.on("stat", (event) => {
             this.hub.sendToClient(event.clientId, {
@@ -328,7 +308,6 @@ class Replica {
                 op: this.op,
                 commit: this.commit,
                 primary: this.primary,
-                clientTable: this.clientTable,
             });
         });
 
@@ -371,7 +350,7 @@ class Replica {
                 return;
             }
 
-            // Execute step 4 of "Normal Operation"!
+            // Execute step 4.
             this.op += 1;
             if (this.op !== op) console.error("UNEXPECTED op increment to mismatch prepare!!", "op=" + this.op, "prepareOp=" + op);
             this.appendLog(this.op, message);
@@ -380,8 +359,8 @@ class Replica {
 
             this.hub.publish({
                 "event": "prepare_ok",
-                "view": this.view,       // v
-                "op": this.op,           // n
+                "view": this.view, // v
+                "op": this.op, // n
                 "replica": this.replica, // i
             });
         });
@@ -419,162 +398,6 @@ class Replica {
             this.commitQueue[event.commit] = true;
             this.attemptCommitBackup(event.commit);
         });
-
-        this.hub.on("triggerStartViewChange", (event) => {
-            const { view, replica } = event;
-            this.view += 1;
-            this.status = "view_change";
-            this.hub.publish({
-                "event": "startViewChange",
-                "view": this.view,       // v
-                "replica": this.replica, // i
-            });
-        });
-
-        this.hub.on("startViewChange", (event) => {
-            console.log("received startViewChange", JSON.stringify(event));
-            const { view, replica } = event;
-
-            if (view > this.view) {
-                // noticed view change needed!
-                this.view += 1;
-                this.status = "view_change";
-                this.hub.publish({
-                    "event": "startViewChange",
-                    "view": this.view,       // v
-                    "replica": this.replica, // i
-                });
-            } else if (view === this.view) {
-                this.startViewChangeCount[view] = this.startViewChangeCount[view] || 0;
-                this.startViewChangeCount[view] = this.startViewChangeCount[view] | (0x1 << replica);
-
-                if (this.bitsOn(this.startViewChangeCount[view]) >= this.f) {
-                    const nextPrimary = (this.primary + 1) % this.replicaCount;
-                    const doViewChangeEvent = {
-                        "event": "doViewChange",
-                        "nextPrimary": nextPrimary,
-                        "view": this.view,                     // v
-                        "viewLastNormal": this.viewLastNormal, // v'
-                        "op": this.op,                         // n
-                        "commit": this.commit,                 // k
-                        "log": this.getLogEntries(),           // l
-                        "replica": this.replica,
-                    };
-                    this.hub.publish(doViewChangeEvent);
-                    // Immediately inform this replica of doViewChange.
-                    if (nextPrimary === this.replica) {
-                        this.doViewChangeCount[this.view] = this.doViewChangeCount[this.view] || 0;
-                        this.doViewChangeCount[this.view] = this.doViewChangeCount[this.view] | (0x1 << this.replica);
-                        this.doViewChangeInfo[this.view] = this.doViewChangeInfo[this.view] || [];
-                        this.doViewChangeInfo[this.view] = this.doViewChangeInfo[this.view].filter((i) => i.replica !== this.replica);
-                        this.doViewChangeInfo[this.view].push(doViewChangeEvent);
-                    }
-                }
-
-            } else {
-                console.log("received startViewChange for lower view number!", "view=" + this.view, "startView=" + view);
-            }
-        });
-
-        this.hub.on("doViewChange", (event) => {
-            if (this.replica !== event.nextPrimary) return;
-
-            const { view, replica, nextPrimary } = event;
-
-            if (this.view > view) {
-                return console.log("skipping doViewChange event", "view=" + this.view, "newView=" + view0);
-            }
-
-            if (view > this.view) {
-                // noticed view change needed!
-                console.log("noticed doViewChange before startViewChange", "view=" + this.view, "newView=" + view, "replica=" + this.replica);
-                this.view += 1;
-                this.status = "view_change";
-                this.hub.publish({
-                    "event": "startViewChange",
-                    "view": this.view,       // v
-                    "replica": this.replica, // i
-                });
-            }
-
-            this.doViewChangeCount[view] = this.doViewChangeCount[view] || 0;
-            this.doViewChangeCount[view] = this.doViewChangeCount[view] | (0x1 << replica);
-            this.doViewChangeInfo[view] = this.doViewChangeInfo[view] || [];
-            this.doViewChangeInfo[view] = this.doViewChangeInfo[view].filter((i) => i.replica !== replica);
-            this.doViewChangeInfo[view].push(event);
-
-            // Execute Step 3 of "View Change"!
-            if (this.bitsOn(this.doViewChangeCount[view]) >= this.f + 1 && this.status === "view_change") {
-                console.log("handling doViewChange", "view=" + this.view, "replica=" + this.replica);
-                this.view = view;
-                const best = this.getBestInfo(this.doViewChangeInfo[view]);
-                // console.log("getBestInfo", this.doViewChangeInfo[view], best);
-                this.op = this.repairLog(best.log);
-                const maxCommit = this.doViewChangeInfo[view].map((info) => info.commit)
-                  .reduce((a, b) => Math.max(a, b), -1);
-                this.commit = maxCommit;
-                this.status = "normal";
-                this.primary = this.replica;
-                this.hub.publish({
-                    "event": "startView",
-                    "view": this.view,           // v
-                    "log": this.getLogEntries(), // l
-                    "op": this.op,               // n
-                    "commit": this.commit,       // k
-                    "replica": this.replica,
-                });
-                // TODO: Step 4 of "View Change!"
-                // perhaps distinguish appendLog from up-calls
-            }
-        });
-
-        this.hub.on("startView", (event) => {
-            if (this.status === "view_change" && event.view >= this.view) {
-                // "View Change" Step 5
-                const { log, view, replica } = event;
-                this.op = this.repairLog(log);
-                this.view = view;
-                this.status = "normal";
-                this.primary = replica;
-                // TODO how to update client table?
-                // TODO send prepareOks to the new primary for any non-committed transactions.
-            }
-        });
-    }
-
-    repairLog(newLog) {
-        const oldLog = this.getLogEntries();
-        const lastOp = (oldLog[oldLog.length - 1] || {}).op;
-        const newEntries = lastOp ? newLog.filter((entry) => entry.op > lastOp) : [];
-        console.log("repairLog entries", "count=" + newEntries.length);
-        newEntries.forEach((newEntry) => {
-            console.log("repairLog newEntry", "op=" + newEntry.op);
-            this.appendLog(newEntry.op, newEntry.message);
-        });
-        return newEntries.length > 0 ? newEntries[newEntries.length - 1].op : (lastOp || this.op);
-    }
-
-    // "View Change" Step 3
-    // "...selects as the new log the one contained in the message with the
-    // largest v'; if several messages have the same v' it selects the one
-    // among them with the largest n."
-    // (v' is the largest view where the state was normal, n is op-number)
-    getBestInfo(doViewChangeInfoList) {
-        const largestViewLastNormal = doViewChangeInfoList
-                                        .map((i) => i.viewLastNormal)
-                                        .reduce((a, b) => Math.max(a, b), -1);
-        const largestInfos = doViewChangeInfoList.filter((info) => info.viewLastNormal === largestViewLastNormal);
-        if (largestInfos.length === 1) {
-            return largestInfos[0];
-        }
-        // If there is more than one infos with the largest normal-state view,
-        // then use the largest op to determine.
-        const largestOp = largestInfos
-            .map((i) => i.op)
-            .reduce((a, b) => Math.max(a, b), -1);
-        const largestOpInfos = largestInfos.filter((info) => info.op === largestOp);
-        // Return the first no matter one or more.
-        return largestOpInfos[0];
     }
 
     attemptCommit(op) {
@@ -613,10 +436,10 @@ class Replica {
             }
             const { requestNumber } = this.clientTable[clientId];
             const response = {
-                "ok": 1,                        // x
-                "view": this.view,              // v
-                "requestNumber": requestNumber, // s
+                "ok": 1, // x
                 "op": toCommitOp,
+                "view": this.view, // v
+                "requestNumber": requestNumber, // s
             };
 
             this.clientTable[clientId].response = response;
@@ -626,8 +449,8 @@ class Replica {
             // TODO: make this optional (if it is send in the next prepare)
             this.hub.publish({
                 "event": "commit",
-                "view": this.view,     // v
-                "commit": this.commit, // k
+                "view": this.view,
+                "commit": this.commit,
                 "replica": this.replica,
             });
         }
@@ -701,26 +524,6 @@ class Replica {
         }
         const filename = path.join(this.directory, "tmp");
         fs.appendFileSync(filename, op + "," + JSON.stringify(message.trim()) + "\n");
-    }
-
-    getLogEntries() {
-        const filename = path.join(this.directory, "tmp");
-        try {
-            const contents = fs.readFileSync(filename).toString();
-            const log = contents.split("\n").filter((l) => l !== "").map((l) => {
-                const firstComma = l.indexOf(",");
-                return {
-                    op: +l.substring(0, firstComma),
-                    message: l.substring(firstComma + 1),
-                };
-            });
-            return log;
-        } catch (err) {
-            if (err.code !== "ENOENT") { // file does not exist yet.
-                console.error("UNEXPECTED getLogEntries", err);
-            }
-            return [];
-        }
     }
 
     getClientTableRequestNumber(clientId) {
