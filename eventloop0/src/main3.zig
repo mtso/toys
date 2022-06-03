@@ -3,23 +3,25 @@ const mem = std.mem;
 const os = std.os;
 const ArrayList = std.ArrayList;
 
-fn call(comptime Context: type, context: Context, func: fn(Context, []const u8) void, message: []const u8) void {
-    func(context, message);
+fn call(comptime Context: type, context: Context, func: fn (Context) void) void {
+    func(context);
 }
 
 const Foo = struct {
-    fn printHi(self: *Foo, message: []const u8) void {
+    message: []const u8,
+
+    fn printHi(self: *Foo) void {
         _ = self;
-        std.log.info("{s}", .{ message });
+        std.log.info("{s}", .{self.message});
     }
 
     fn runCall(self: *Foo) void {
-        call(*Foo, self, printHi, "hi!");
+        call(*Foo, self, printHi);
     }
 };
 
 pub fn main() anyerror!void {
-    var foo = Foo{};
+    var foo = Foo{ .message = "hi!" };
     foo.runCall();
 }
 

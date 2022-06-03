@@ -49,17 +49,12 @@ const Server = struct {
     }
 
     pub fn maybe_accept(self: *Server) void {
-        const connection_socket = os.accept(
-            self.accept_fd,
-            null,
-            null,
-            os.SOCK.NONBLOCK
-        ) catch |err| {
-            std.debug.print("accept error! {any}\n", .{ err });
+        const connection_socket = os.accept(self.accept_fd, null, null, os.SOCK.NONBLOCK) catch |err| {
+            std.debug.print("accept error! {any}\n", .{err});
             return;
         };
 
-        std.debug.print("got connection {any}\n", .{ connection_socket });
+        std.debug.print("got connection {any}\n", .{connection_socket});
     }
 };
 
