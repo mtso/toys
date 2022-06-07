@@ -20,9 +20,26 @@ const Foo = struct {
     }
 };
 
+fn printFoo() void {
+    std.log.info("foo", .{});
+}
+
+fn printBar() void {
+    std.log.info("bar", .{});
+}
+
 pub fn main() anyerror!void {
     var foo = Foo{ .message = "hi!" };
     foo.runCall();
+
+    event_loop.set_timer(5000, printFoo);
+    event_loop.set_timer(2000, printBar);
+    // bar
+    // foo
+
+    while (event_loop.continue()) {
+        event_loop.run();
+    }
 }
 
 test "basic test" {
