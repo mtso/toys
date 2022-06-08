@@ -20,11 +20,13 @@ const EventLoop = struct {
             }
         }.onCall;
 
-        callback.start = std.time.milliTimestamp();
-        callback.delay = delay;
-        callback.context = context;
-        callback.callback = callbackFn;
-        callback.next = null;
+        callback.* = .{
+            .start = std.time.milliTimestamp(),
+            .delay = delay,
+            .context = context,
+            .callback = callbackFn,
+            .next = null,
+        };
 
         self.timers.push(callback);
     }
@@ -64,7 +66,9 @@ const User1 = struct {
 
     fn print(self: *User1, _: *EventLoop.Callback) void {
         self.callCount += 1;
-        std.log.info("message n: {d}", .{self.callCount});
+        std.log.info("{} message n: {d}", .{ std.time.timestamp(), self.callCount });
+
+        self.event_loop.setTimer(5000, &self.callback, *User1, self, print);
     }
 };
 
