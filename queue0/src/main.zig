@@ -7,9 +7,9 @@ const mem = std.mem;
 //     Eg: queue at ticket counters, bus station
 // 4 major operations:
 //     enqueue(ele) – used to insert element at top
-//     dequeue() – removes the top element from queue 
-//     peekfirst() – to get the first element of the queue 
-//     peeklast() – to get the last element of the queue 
+//     dequeue() – removes the top element from queue
+//     peekfirst() – to get the first element of the queue
+//     peeklast() – to get the last element of the queue
 // All operation works in constant time i.e, O(1)
 // Advantages
 //     Maintains data in FIFO manner
@@ -81,20 +81,12 @@ fn Queue(comptime T: anytype) type {
         // [ 2, <-          ]       return value is 2
 
         pub fn dequeue(self: *Self) ?T {
-            if (self.peekFirst()) |v| {
-                var nodeToRemove: ?*Node = self.tail;
-                self.tail = nodeToRemove.?.prev;
-                self.allocator.destroy(nodeToRemove.?);
-                // in the case where this element was the last one
-                // update head
-                if (null == self.tail) {
-                    self.head = null;
-                }
-
-                return v;
-            } else {
-                return null;
-            }
+            const tail = if (self.tail) |t| t else return null;
+            self.tail = tail.prev;
+            const value = tail.value;
+            self.allocator.destroy(tail);
+            if (self.head == tail) self.head = null;
+            return value;
         }
 
         pub fn peekFirst(self: *Self) ?T {
@@ -108,11 +100,15 @@ fn Queue(comptime T: anytype) type {
 }
 
 pub fn main() anyerror!void {
+    // ArenaAllocator
+    // PageAllocator
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
     var queue = Queue(u64){ .allocator = allocator };
-    std.debug.print("{any}\n", .{ queue.peekFirst() });
-    std.debug.print("{any} == null\n", .{ queue.dequeue() });
+    // var queueStr = Queue([]const u8){ .allocator = allocator };
+
+    std.debug.print("{any}\n", .{queue.peekFirst()});
+    std.debug.print("{any} == null\n", .{queue.dequeue()});
 
     try queue.enqueue(1);
     try queue.enqueue(2);
@@ -121,14 +117,10 @@ pub fn main() anyerror!void {
     //           ^
 
     // std.debug.print("{any}\n", .{ queue });
-    std.debug.print("{any}\n", .{ queue.peekFirst() });
-    std.debug.print("{any} == 1\n", .{ queue.dequeue() });
-    std.debug.print("{any} == 2\n", .{ queue.dequeue() });
-    std.debug.print("{any} == 3\n", .{ queue.dequeue() });
-    std.debug.print("{any} == null\n", .{ queue.dequeue() });
-    std.debug.print("{any} == null\n", .{ queue.dequeue() });
-}
-
-test "basic test" {
-    try std.testing.expectEqual(10, 3 + 7);
+    std.debug.print("{any}\n", .{queue.peekFirst()});
+    std.debug.print("{any} == 1\n", .{queue.dequeue()});
+    std.debug.print("{any} == 2\n", .{queue.dequeue()});
+    std.debug.print("{any} == 3\n", .{queue.dequeue()});
+    std.debug.print("{any} == null\n", .{queue.dequeue()});
+    std.debug.print("{any} == null\n", .{queue.dequeue()});
 }
