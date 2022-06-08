@@ -15,7 +15,7 @@ const EventLoop = struct {
         delay: i64,
         from: i64,
         context: ?*anyopaque,
-        func: fn(*EventLoop, Callback) void,
+        func: fn (*EventLoop, Callback) void,
     };
 
     pub fn setTimer(
@@ -23,7 +23,7 @@ const EventLoop = struct {
         delay: i64,
         comptime Context: anytype,
         context: Context,
-        comptime func: fn(context: Context, callback: Callback) void,
+        comptime func: fn (context: Context, callback: Callback) void,
     ) !void {
         const callbackFn = struct {
             fn onCall(_: *EventLoop, _callback: Callback) void {
@@ -79,17 +79,20 @@ fn printBar() void {
 const User1 = struct {
     counter: i64,
     messages: ArrayList([]const u8),
-    event_loop: EventLoop,
+    event_loop: *EventLoop,
 
     pub fn testRun(self: *User1) !void {
+        try self.messages.append("hi 1");
+        try self.messages.append("hi 2");
+        try self.messages.append("hi 3");
+
         self.counter += 1;
         while (self.counter <= 3) : (self.counter += 1) {
-            std.debug.print("setting timer {d}\n", .{ self.counter });
-            try self.messages.append("hi");
+            std.debug.print("setting timer {d}\n", .{self.counter});
             try self.event_loop.setTimer(self.counter * 1000, *User1, self, printNext);
         }
 
-        std.debug.print("event loop: {d}\n", .{ self.event_loop.queue.items.len });
+        std.debug.print("event loop: {d}\n", .{self.event_loop.queue.items.len});
         assert(self.event_loop.queue.items.len == 3);
     }
 
@@ -111,28 +114,22 @@ pub fn main() anyerror!void {
         .previous = std.time.milliTimestamp(),
     };
 
-    var user = User1 {
+    var user = User1{
         .counter = 0,
         .messages = ArrayList([]const u8).init(allocator),
-        .event_loop = event_loop,
+        .event_loop = &event_loop,
     };
 
     try user.testRun();
 
-    std.debug.print("user ev {*}\n", .{ &user.event_loop.queue });
-    std.debug.print("ev {*}\n", .{ &event_loop.queue });
+    std.debug.print("user ev {*}\n", .{&user.event_loop.queue});
+    std.debug.print("ev {*}\n", .{&event_loop.queue});
 
     assert(user.event_loop.queue.items.len == 3);
 
-    // try event_loop.setTimer(5000, printFoo);
-    // try event_loop.setTimer(2000, printBar);
-
-    while (user.event_loop.shouldContinue()) {
-        user.event_loop.run();
+    while (event_loop.shouldContinue()) {
+        event_loop.run();
     }
-    // while (event_loop.shouldContinue()) {
-    //     event_loop.run();
-    // }
 }
 
 test "basic test" {
