@@ -37,6 +37,26 @@ const IntQueue = struct {
         while (self.first) |_| _ = self.dequeue();
     }
 
+    /// Queue with 0 elements
+    /// ===
+    ///   first  last
+    ///    v      v
+    ///   NULL   NULL
+    ///
+    ///
+    /// Queue with 1 element
+    /// ===
+    ///   first  last
+    ///    v      v
+    ///   [ value, next: NULL ]
+    ///
+    /// Queue with 3 elements
+    /// ===
+    ///   first                                 last
+    ///     v                                    v
+    ///   node1              node2              node3
+    ///   [ value, next ] -> [ value, next ] -> [ value, next: NULL ]
+    ///
     fn enqueue(self: *IntQueue, value: i32) !void {
         var node = try self.allocator.create(IntNode);
         node.* = .{
@@ -140,26 +160,6 @@ fn Queue(comptime T: type) type {
             while (self.first) |_| _ = self.dequeue();
         }
 
-        /// Queue with 0 elements
-        /// ===
-        ///   first  last
-        ///    v      v
-        ///   NULL   NULL
-        ///
-        ///
-        /// Queue with 1 element
-        /// ===
-        ///   first  last
-        ///    v      v
-        ///   [ value, next: NULL ]
-        ///
-        /// Queue with 3 elements
-        /// ===
-        ///   first                                 last
-        ///     v                                    v
-        ///   node1              node2              node3
-        ///   [ value, next ] -> [ value, next ] -> [ value, next: NULL ]
-        ///
         fn enqueue(self: *Queue(T), value: T) !void {
             var node = try self.allocator.create(Node);
             node.* = .{
@@ -205,7 +205,6 @@ fn Queue(comptime T: type) type {
         fn peekLast(self: *Queue(T)) ?T {
             return if (self.last) |last| last.value else null;
         }
-
 
         /// Extra
         fn isEmpty(self: *Queue(T)) bool {

@@ -1,5 +1,7 @@
 const std = @import("std");
 
+/// A first-in, first-out queue. The Node type is a user-defined
+/// struct with a "next" field of "?*Node".
 fn Queue(comptime Node: type) type {
     return struct {
         first: ?*Node,
