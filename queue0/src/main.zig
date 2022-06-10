@@ -92,10 +92,6 @@ fn Queue(comptime T: anytype) type {
         pub fn peekFirst(self: *Self) ?T {
             return if (self.tail) |tail| tail.value else null;
         }
-
-        // pub fn peekFirstPtr(self: *Self) ?*Node {
-        //     return self.tail;
-        // }
     };
 }
 
