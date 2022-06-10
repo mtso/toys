@@ -25,6 +25,10 @@ fn Queue(comptime Node: type) type {
         fn peekFirst(self: *Queue(Node)) ?*Node {
             return self.first;
         }
+
+        fn peekLast(self: *Queue(Node)) ?*Node {
+            return self.last;
+        }
     };
 }
 
@@ -40,6 +44,7 @@ test "Queue" {
     queue.enqueue(&el1);
     queue.enqueue(&el2);
     try std.testing.expectEqual(@as(i32, 1), queue.peekFirst().?.value);
+    try std.testing.expectEqual(@as(i32, 2), queue.peekLast().?.value);
 
     const deq1 = queue.dequeue();
     try std.testing.expectEqual(@as(i32, 1), deq1.?.value);

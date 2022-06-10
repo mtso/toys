@@ -1,6 +1,11 @@
 const std = @import("std");
 const mem = std.mem;
+const assert = std.debug.assert;
 
+/// The Queue data structure is a first-in, first-out list.
+/// Meaning that items that are added first, are also
+/// removed first (before items added afterwards).
+///
 /// Queue data structure provides:
 /// - enqueue: adds an element to the end
 /// - dequeue: removes and returns the element at the head if it exists
@@ -32,6 +37,26 @@ fn Queue(comptime T: type) type {
             while (self.first) |_| _ = self.dequeue();
         }
 
+        /// Queue with 0 elements
+        /// ===
+        ///   first  last
+        ///    v      v
+        ///   NULL   NULL
+        ///
+        ///
+        /// Queue with 1 element
+        /// ===
+        ///   first  last
+        ///    v      v
+        ///   [ value, next: NULL ]
+        ///
+        /// Queue with 3 elements
+        /// ===
+        ///   first                                 last
+        ///     v                                    v
+        ///   node1              node2              node3
+        ///   [ value, next ] -> [ value, next ] -> [ value, next: NULL ]
+        ///
         fn enqueue(self: *Queue(T), value: T) !void {
             var node = try self.allocator.create(Node);
             node.* = .{
@@ -52,7 +77,20 @@ fn Queue(comptime T: type) type {
             const first = if (self.first) |first| first else return null;
             const value = first.value;
             self.first = first.next;
-            if (self.last == first) self.last = null;
+
+            // Queue with 1 element
+            // ===
+            //   first  last
+            //    v      v
+            //   [ value, next: NULL ]
+            //
+            // If both first and last point to the same node,
+            // the queue is emptied out into initial state
+            // by ensuring both first and last pointers are NULL.
+            if (self.last == first) {
+                self.last = null;
+                assert(self.first == null);
+            }
             self.allocator.destroy(first);
             return value;
         }
@@ -89,6 +127,7 @@ test "queue" {
     try queue.enqueue(3);
     try std.testing.expectEqual(@as(u32, 1), queue.peekFirst().?);
     try std.testing.expectEqual(@as(u32, 3), queue.peekLast().?);
+    try std.testing.expectEqual(@as(u32, 1), queue.dequeue().?);
 }
 
 test "deinit" {
