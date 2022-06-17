@@ -6,6 +6,7 @@ pub fn Queue(comptime T: anytype) type {
         out: ?*T = null,
 
         pub fn push(self: *Self, item: *T) void {
+            item.next = null;
             if (self.in != null) {
                 self.in.?.next = item;
                 self.in = item;

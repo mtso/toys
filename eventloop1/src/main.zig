@@ -9,25 +9,42 @@ const EventLoop = struct {
 
     const Timeout = struct {
         expire_time: i64,
+        // A pointer reference to the struct that will be passed back to the callback.
         context: *anyopaque,
         callback: fn (*Timeout) void,
+        // The reference to the next node as specified by the Queue data structure.
         next: ?*Timeout,
     };
 
+    // - The Timeout is passed in by the caller so that the timeout remains on the stack
+    //   for as long as the caller is also on the stack.
+    // - The Context type declares the type of the calling struct and is used
+    //   to convert the type-erased pointer back into the correct type
+    //   for invoking the callback function with.
     pub fn setTimeout(self: *EventLoop, delay: i64, timeout: *Timeout, comptime Context: type, context: Context, comptime callback: fn (Context) void) void {
         self.tasks += 1;
 
-        const wrapped_callback = struct {
-            fn callback(_timeout: *Timeout) void {
+        // The expire time is set based on the delay from the current timestamp.
+        // A negative or zero delay will be executed immediately on the next tick
+        // of the event loop.
+        const expire_time = std.time.milliTimestamp() + delay;
+
+        // This wrapper struct allows timeouts to be queued for
+        // functions with different type signatures.
+        const typed_callback = struct {
+            fn wrapped(_timeout: *Timeout) void {
+                // The type-erased pointer "*anyopaque" is
+                // converted into usize and then back into a pointer
+                // that matches the Context type.
                 const typed_context = @intToPtr(Context, @ptrToInt(_timeout.context));
                 callback(typed_context);
             }
-        }.callback;
+        }.wrapped;
 
         timeout.* = .{
-            .expire_time = std.time.milliTimestamp() + delay,
+            .expire_time = expire_time,
             .context = context,
-            .callback = wrapped_callback,
+            .callback = typed_callback,
             .next = null,
         };
 
@@ -63,9 +80,12 @@ const EventLoop = struct {
 const DelayedPrinter = struct {
     start: i64,
     message: []const u8,
+    // A reference to a Timeout struct is held on the stack for the event loop.
     timeout: EventLoop.Timeout = undefined,
 
     fn schedule(self: *DelayedPrinter, event_loop: *EventLoop, delay: i64) void {
+        // onTimeout contains a reference to this instance of DelayedPrinter,
+        // which contains the message, so the context must be set to *DelayedPrinter.
         event_loop.setTimeout(delay, &self.timeout, *DelayedPrinter, self, onTimeout);
     }
 
