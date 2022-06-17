@@ -2,6 +2,8 @@ const std = @import("std");
 const ArrayList = std.ArrayList;
 const Queue = @import("queue.zig").Queue;
 
+// An event loop which allows callers to schedule timeouts to delay
+// the execution of callback functions to a future point in time.
 const EventLoop = struct {
     timers: Queue(Timeout) = .{},
     ticks: u64 = 0,
@@ -116,8 +118,4 @@ pub fn main() anyerror!void {
 
     std.log.info("event loop has no more tasks, bye!", .{});
     std.log.info("stats ticks={d} tasks={d}", .{ event_loop.ticks, event_loop.tasks });
-}
-
-test "basic test" {
-    try std.testing.expectEqual(10, 3 + 7);
 }
