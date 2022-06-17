@@ -1,4 +1,4 @@
-pub fn Fifo(comptime T: anytype) type {
+pub fn Queue(comptime T: anytype) type {
     return struct {
         const Self = @This();
 
@@ -41,7 +41,7 @@ const Foo = struct {
 test "insert" {
     const std = @import("std");
 
-    var fifo = Fifo(Foo){};
+    var fifo = Queue(Foo){};
 
     var foo1 = Foo{ .value = 1, .next = null };
     var foo2 = Foo{ .value = 2, .next = null };
