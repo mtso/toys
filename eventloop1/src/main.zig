@@ -70,6 +70,7 @@ const EventLoop = struct {
             // If the expire time has passed the current time,
             // execute the callback.
             if (std.time.milliTimestamp() >= timeout.expire_time) {
+                // timeout.callback : fn(*Timeout) void
                 timeout.callback(timeout);
             } else {
                 // Otherwise, add the timeout back into the queue at the end.

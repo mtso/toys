@@ -5,7 +5,8 @@
 # 3. User-managed nodes in the queue.
   - `queue3/src/main.zig::Queue`
 
-## Use case: event loop for asynchronous actions where results are polled.
+## Use case: event loop for asynchronous actions where results are polled in a single-threaded program.
+  - `eventloop1/src/main.zig`
 
 > When an action is requested (like reading from a file)
 it is placed on the queue.
@@ -30,3 +31,8 @@ if there are outstanding tasks
             push the task back into the queue
     jump to START
 ```
+
+Popular Event Loops:
+- libuv, used in nodejs
+- dart's Isolate/event loop
+- rust's tokio library, used in deno
