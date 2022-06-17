@@ -36,3 +36,4 @@ Popular Event Loops:
 - libuv, used in nodejs
 - dart's Isolate/event loop
 - rust's tokio library, used in deno
+- python's asyncio library
